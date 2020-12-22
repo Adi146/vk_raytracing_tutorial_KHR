@@ -37,7 +37,6 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #include "imgui_impl_glfw.h"
 
 #include "hello_vulkan.h"
-#include "imgui_camera_widget.h"
 #include "nvh/cameramanipulator.hpp"
 #include "nvh/fileoperations.hpp"
 #include "nvpsystem.hpp"
@@ -60,18 +59,45 @@ static void onErrorCallback(int error, const char* description)
 }
 
 // Extra UI
-void renderUI(HelloVulkan& helloVk)
+void renderUI(HelloVulkan& helloVk, nvmath::vec4f* clearColor)
 {
-  ImGuiH::CameraWidget();
-  if(ImGui::CollapsingHeader("Light"))
-  {
-    ImGui::RadioButton("Point", &helloVk.m_pushConstant.lightType, 0);
-    ImGui::SameLine();
-    ImGui::RadioButton("Infinite", &helloVk.m_pushConstant.lightType, 1);
+  ImGui::TextColored(ImVec4(1,1,0,1), "Common");
+  ImGui::ColorEdit3("Clear color", reinterpret_cast<float*>(clearColor));
+  ImGui::SliderInt("Samples", &helloVk.m_rtPushConstants.samples, 1, 16);
+  ImGui::SliderInt("Bounces", &helloVk.m_rtPushConstants.bounces, 0, 5);
+  ImGui::SliderInt("Samples Per Bounce", &helloVk.m_rtPushConstants.bounceSamples, 1, 4);
 
-    ImGui::SliderFloat3("Position", &helloVk.m_pushConstant.lightPosition.x, -20.f, 20.f);
-    ImGui::SliderFloat("Intensity", &helloVk.m_pushConstant.lightIntensity, 0.f, 150.f);
+  ImGui::TextColored(ImVec4(1,1,0,1), "Direct Lighting");
+  ImGui::RadioButton("Off", &helloVk.m_rtPushConstants.lightType, -1);
+  ImGui::SameLine();
+  ImGui::RadioButton("Point", &helloVk.m_rtPushConstants.lightType, 0);
+  ImGui::SameLine();
+  ImGui::RadioButton("Infinite", &helloVk.m_rtPushConstants.lightType, 1);
+
+  if (helloVk.m_rtPushConstants.lightType != -1)
+  {
+    ImGui::SliderFloat3("Light Position", &helloVk.m_rtPushConstants.lightPosition.x, -20.f, 20.f);
+    ImGui::SliderFloat("Light Intensity", &helloVk.m_rtPushConstants.lightIntensity, 0.f, 100.f);
   }
+
+  ImGui::TextColored(ImVec4(1,1,0,1), "Temporal Filter");
+  ImGui::SliderFloat("Alpha", &helloVk.m_rtPushConstants.temporalAlpha, 0.f, 0.99f);
+
+  ImGui::TextColored(ImVec4(1,1,0,1), "Post Processing");
+  ImGui::RadioButton("Blur Off", &helloVk.m_postPushConstants.kernelType, -1);
+  ImGui::SameLine();
+  ImGui::RadioButton("Gaussian Blur 3x3", &helloVk.m_postPushConstants.kernelType, 0);
+  ImGui::SameLine();
+  ImGui::RadioButton("Gaussian Blur 5x5", &helloVk.m_postPushConstants.kernelType, 1);
+
+  ImGui::TextColored(ImVec4(1,1,0,1), "A-Trous");
+  ImGui::SliderFloat("C_Phi", &helloVk.m_c_phi0, 0.0f, 1.0f);
+  ImGui::SliderFloat("N_Phi", &helloVk.m_n_phi0, 0.0f, 100.0f);
+  ImGui::SliderFloat("P_Phi", &helloVk.m_p_phi0, 0.0f, 100.0f);
+  ImGui::Text(
+    "Application average %.3f ms/frame (%.1f FPS)",
+    1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate
+  );
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -119,10 +145,12 @@ int main(int argc, char** argv)
       NVPSystem::exePath() + std::string(PROJECT_NAME),
   };
 
+
   // Requesting Vulkan extensions and layers
   nvvk::ContextCreateInfo contextInfo(true);
   contextInfo.setVersion(1, 2);
   contextInfo.addInstanceLayer("VK_LAYER_LUNARG_monitor", true);
+  contextInfo.addInstanceLayer("VK_LAYER_KHRONOS_validation");
   contextInfo.addInstanceExtension(VK_KHR_SURFACE_EXTENSION_NAME);
   contextInfo.addInstanceExtension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME, true);
 #ifdef WIN32
@@ -177,14 +205,21 @@ int main(int argc, char** argv)
   helloVk.initGUI(0);  // Using sub-pass 0
 
   // Creation of the example
-  helloVk.loadScene(nvh::findFile("media/scenes/cornellBox.gltf", defaultSearchPaths, true));
-
+  helloVk.loadScene(nvh::findFile("media/scenes/cornellBox.gltf", defaultSearchPaths));
+  //helloVk.loadScene(nvh::findFile("../glTF-Sample-Models/2.0/Sponza/glTF/Sponza.gltf", defaultSearchPaths));
 
   helloVk.createOffscreenRender();
   helloVk.createDescriptorSetLayout();
-  helloVk.createGraphicsPipeline();
   helloVk.createUniformBuffer();
   helloVk.updateDescriptorSet();
+
+  helloVk.createGBufferRender();
+  helloVk.createGBufferPipeline();
+
+  helloVk.createATrousRender();
+  helloVk.createATrousDescriptor();
+  helloVk.createATrousPipeline();
+  helloVk.updateATrousDescriptorSet();
 
   // #VKRay
   helloVk.initRayTracing();
@@ -198,10 +233,7 @@ int main(int argc, char** argv)
   helloVk.createPostPipeline();
   helloVk.updatePostDescriptorSet();
 
-
   nvmath::vec4f clearColor   = nvmath::vec4f(1, 1, 1, 1.00f);
-  bool          useRaytracer = true;
-
 
   helloVk.setupGlfwCallbacks(window);
   ImGui_ImplGlfw_InitForVulkan(window, true);
@@ -218,25 +250,14 @@ int main(int argc, char** argv)
     ImGui::NewFrame();
 
     // Show UI window.
-    if(helloVk.showGui())
-    {
-      ImGuiH::Panel::Begin();
-      ImGui::ColorEdit3("Clear color", reinterpret_cast<float*>(&clearColor));
-      ImGui::Checkbox("Ray Tracer mode", &useRaytracer);  // Switch between raster and ray tracing
-
-      renderUI(helloVk);
-      ImGui::Text("Application average %.3f ms/frame (%.1f FPS)",
-                  1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
-      ImGuiH::Control::Info("", "", "(F10) Toggle Pane", ImGuiH::Control::Flags::Disabled);
-      ImGuiH::Panel::End();
-    }
+    renderUI(helloVk, &clearColor);
 
     // Start rendering the scene
     helloVk.prepareFrame();
 
     // Start command buffer of this frame
     auto                     curFrame = helloVk.getCurFrame();
-    const vk::CommandBuffer& cmdBuf   = helloVk.getCommandBuffers()[curFrame];
+    const vk::CommandBuffer& cmdBuf  = helloVk.getCommandBuffers()[curFrame];
 
     cmdBuf.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 
@@ -249,6 +270,25 @@ int main(int argc, char** argv)
         std::array<float, 4>({clearColor[0], clearColor[1], clearColor[2], clearColor[3]}));
     clearValues[1].setDepthStencil({1.0f, 0});
 
+    {
+      vk::ClearValue gBufferClearValues[3];
+      gBufferClearValues[0].setColor(std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f});
+      gBufferClearValues[1].setColor(std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f});
+      gBufferClearValues[2].setColor(std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f});
+      gBufferClearValues[3].setDepthStencil({1.0f, 0});
+
+      vk::RenderPassBeginInfo gBufferRenderPassBeginInfo;
+      gBufferRenderPassBeginInfo.setClearValueCount(4);
+      gBufferRenderPassBeginInfo.setPClearValues(gBufferClearValues);
+      gBufferRenderPassBeginInfo.setRenderPass(helloVk.m_gBufferRenderPass);
+      gBufferRenderPassBeginInfo.setFramebuffer(helloVk.m_gBufferFramebuffer);
+      gBufferRenderPassBeginInfo.setRenderArea({{}, helloVk.getSize()});
+
+      cmdBuf.beginRenderPass(gBufferRenderPassBeginInfo, vk::SubpassContents::eInline);
+      helloVk.drawGBuffer(cmdBuf);
+      cmdBuf.endRenderPass();
+    }
+
     // Offscreen render pass
     {
       vk::RenderPassBeginInfo offscreenRenderPassBeginInfo;
@@ -259,16 +299,11 @@ int main(int argc, char** argv)
       offscreenRenderPassBeginInfo.setRenderArea({{}, helloVk.getSize()});
 
       // Rendering Scene
-      if(useRaytracer)
-      {
-        helloVk.raytrace(cmdBuf, clearColor);
-      }
-      else
-      {
-        cmdBuf.beginRenderPass(offscreenRenderPassBeginInfo, vk::SubpassContents::eInline);
-        helloVk.rasterize(cmdBuf);
-        cmdBuf.endRenderPass();
-      }
+      helloVk.raytrace(cmdBuf, clearColor);
+    }
+
+    {
+      helloVk.drawATrous(cmdBuf);
     }
 
     // 2nd rendering pass: tone mapper, UI
@@ -285,6 +320,7 @@ int main(int argc, char** argv)
       helloVk.drawPost(cmdBuf);
       // Rendering UI
       ImGui::Render();
+      // Rendering UI
       ImGui::RenderDrawDataVK(cmdBuf, ImGui::GetDrawData());
       cmdBuf.endRenderPass();
     }

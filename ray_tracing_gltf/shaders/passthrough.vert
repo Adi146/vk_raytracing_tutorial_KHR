@@ -1,6 +1,6 @@
 #version 450
-layout (location = 0) out vec2 outUV;
-
+layout (location = 0) out vec2 texCoord;
+layout(set = 0, binding = 0) uniform sampler2D noisyTxt;
 
 out gl_PerVertex
 {
@@ -10,6 +10,9 @@ out gl_PerVertex
 
 void main()
 {
-  outUV = vec2((gl_VertexIndex << 1) & 2, gl_VertexIndex & 2);
-  gl_Position = vec4(outUV * 2.0f - 1.0f, 1.0f, 1.0f);
+  vec2 vertex = vec2(-1.0) + vec2(
+    float((gl_VertexIndex & 1) << 2),
+    float((gl_VertexIndex & 2) << 1));
+  gl_Position = vec4(vertex, 0.0, 1.0);
+  texCoord = (vertex * 0.5 + vec2(0.5)) * textureSize(noisyTxt, 0);
 }

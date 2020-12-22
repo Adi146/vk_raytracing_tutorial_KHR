@@ -52,7 +52,6 @@ public:
              const vk::PhysicalDevice& physicalDevice,
              uint32_t                  queueFamily) override;
   void createDescriptorSetLayout();
-  void createGraphicsPipeline();
   void loadScene(const std::string& filename);
   void updateDescriptorSet();
   void createUniformBuffer();
@@ -60,7 +59,6 @@ public:
   void updateUniformBuffer(const vk::CommandBuffer& cmdBuf);
   void onResize(int /*w*/, int /*h*/) override;
   void destroyResources();
-  void rasterize(const vk::CommandBuffer& cmdBuff);
 
   // Structure used for retrieving the primitive information in the closest hit
   // The gl_InstanceCustomIndexNV
@@ -84,17 +82,11 @@ public:
   // Information pushed at each draw call
   struct ObjPushConstant
   {
-    nvmath::vec3f lightPosition{0.f, 4.5f, 0.f};
     int           instanceId{0};  // To retrieve the transformation matrix
-    float         lightIntensity{10.f};
-    int           lightType{0};  // 0: point, 1: infinite
     int           materialId{0};
   };
   ObjPushConstant m_pushConstant;
 
-  // Graphic pipeline
-  vk::PipelineLayout          m_pipelineLayout;
-  vk::Pipeline                m_graphicsPipeline;
   nvvk::DescriptorSetBindings m_descSetLayoutBind;
   vk::DescriptorPool          m_descPool;
   vk::DescriptorSetLayout     m_descSetLayout;
@@ -106,12 +98,69 @@ public:
   nvvk::AllocatorDedicated m_alloc;  // Allocator for buffer, images, acceleration structures
   nvvk::DebugUtil          m_debug;  // Utility to name objects
 
+  // # GBuffer
+  void createGBufferRender();
+  void createGBufferPipeline();
+  void drawGBuffer(const vk::CommandBuffer& cmdBuf);
+
+  vk::Pipeline                m_gBufferPipeline;
+  vk::PipelineLayout          m_gBufferPipelineLayout;
+  vk::RenderPass              m_gBufferRenderPass;
+  vk::Framebuffer             m_gBufferFramebuffer;
+  vk::Format                  m_positionColorFormat{vk::Format::eR32G32B32A32Sfloat};
+  nvvk::Texture               m_position;
+  vk::Format                  m_normalColorFormat{vk::Format::eR32G32B32A32Sfloat};
+  nvvk::Texture               m_normal;
+  vk::Format                  m_colorColorFormat{vk::Format::eR8G8B8A8Unorm};
+  nvvk::Texture               m_color;
+  vk::Format                  m_depthColorFormat{vk::Format::eD32Sfloat};
+  nvvk::Texture               m_depth;
+
+  // #A-Trous
+  void createATrousRender();
+  void createATrousPipeline();
+  void createATrousDescriptor();
+  void updateATrousDescriptorSet();
+  void drawATrous(const vk::CommandBuffer& cmdBuf);
+
+  nvvk::DescriptorSetBindings m_aTrousDescSetLayoutBind;
+  vk::DescriptorPool          m_aTrousDescPool;
+  vk::DescriptorSetLayout     m_aTrousDescSetLayout;
+  vk::DescriptorSet           m_aTrousDescSetPing;
+  vk::DescriptorSet           m_aTrousDescSetPong;
+  vk::Pipeline                m_aTrousPipeline;
+  vk::PipelineLayout          m_aTrousPipelineLayout;
+  vk::RenderPass              m_aTrousRenderPass;
+  vk::Framebuffer             m_aTrousFramebufferPing;
+  vk::Framebuffer             m_aTrousFramebufferPong;
+  nvvk::Texture               m_aTrousTexturePing;
+  nvvk::Texture               m_aTrousTexturePong;
+
+  struct ATrousPushConstants
+  {
+    int stepwidth;
+    float c_phi;
+    float n_phi;
+    float p_phi;
+  };
+  ATrousPushConstants m_aTrousPushConstant;
+
+  bool m_enableATrous = false;
+  float m_c_phi0 = 1E-2f;
+  float m_n_phi0 = 1E-2f;
+  float m_p_phi0 = 1E-1f;
+
   // #Post
   void createOffscreenRender();
   void createPostPipeline();
   void createPostDescriptor();
   void updatePostDescriptorSet();
   void drawPost(vk::CommandBuffer cmdBuf);
+
+  struct PostPushConstant
+  {
+    int kernelType{-1}; // -1: off, 0: Gaussian Blur 3x3, 1: Gaussian Blur 5x5
+  } m_postPushConstants;
 
   nvvk::DescriptorSetBindings m_postDescSetLayoutBind;
   vk::DescriptorPool          m_postDescPool;
@@ -154,9 +203,13 @@ public:
   struct RtPushConstant
   {
     nvmath::vec4f clearColor;
-    nvmath::vec3f lightPosition;
-    float         lightIntensity;
-    int           lightType;
+    nvmath::vec3f lightPosition{0.f, 4.5f, 0.f};
+    float         lightIntensity{10.f};
+    int           lightType{-1}; // -1: off, 0: point, 1: infinite
     int           frame{0};
+    int           samples{2};
+    int           bounces{2};
+    int           bounceSamples{2};
+    float         temporalAlpha{0.1f};
   } m_rtPushConstants;
 };

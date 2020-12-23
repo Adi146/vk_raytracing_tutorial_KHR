@@ -73,6 +73,17 @@ vec2 getTexCoord(uint index)
 
 void main()
 {
+  if(prd.depth > pushC.bounces)
+  {
+    prd.radiance = vec3(0);
+    prd.normal = vec3(0);
+    prd.albedo = vec3(0);
+
+    return;
+  }
+
+  prd.depth++;
+
   // Retrieve the Primitive mesh buffer information
   PrimMeshInfo pinfo = primInfo[gl_InstanceCustomIndexEXT];
 
@@ -81,152 +92,133 @@ void main()
   uint vertexOffset = pinfo.vertexOffset;           // Vertex offset as defined in glTF
   uint matIndex     = max(0, pinfo.materialIndex);  // material of primitive mesh
 
+  // Getting the 3 indices of the triangle (local)
+  ivec3 triangleIndex = ivec3(indices[nonuniformEXT(indexOffset + 0)],  //
+                                indices[nonuniformEXT(indexOffset + 1)],  //
+                                indices[nonuniformEXT(indexOffset + 2)]);
+  triangleIndex += ivec3(vertexOffset);  // (global)
+
+  const vec3 barycentrics = vec3(1.0 - attribs.x - attribs.y, attribs.x, attribs.y);
+
+  // Vertex of the triangle
+  const vec3 pos0           = getVertex(triangleIndex.x);
+  const vec3 pos1           = getVertex(triangleIndex.y);
+  const vec3 pos2           = getVertex(triangleIndex.z);
+  const vec3 position       = pos0 * barycentrics.x + pos1 * barycentrics.y + pos2 * barycentrics.z;
+  const vec3 world_position = vec3(gl_ObjectToWorldEXT * vec4(position, 1.0));
+
+  // Normal
+  const vec3 nrm0 = getNormal(triangleIndex.x);
+  const vec3 nrm1 = getNormal(triangleIndex.y);
+  const vec3 nrm2 = getNormal(triangleIndex.z);
+  vec3 normal = normalize(nrm0 * barycentrics.x + nrm1 * barycentrics.y + nrm2 * barycentrics.z);
+  const vec3 world_normal = normalize(vec3(normal * gl_WorldToObjectEXT));
+  const vec3 geom_normal  = normalize(cross(pos1 - pos0, pos2 - pos0));
+
+  // TexCoord
+  const vec2 uv0       = getTexCoord(triangleIndex.x);
+  const vec2 uv1       = getTexCoord(triangleIndex.y);
+  const vec2 uv2       = getTexCoord(triangleIndex.z);
+  const vec2 texcoord0 = uv0 * barycentrics.x + uv1 * barycentrics.y + uv2 * barycentrics.z;
+
   // https://en.wikipedia.org/wiki/Path_tracing
   // Material of the object
   GltfShadeMaterial mat       = materials[nonuniformEXT(matIndex)];
   vec3              emittance = mat.emissiveFactor;
 
-    // Recursively trace reflected light sources.
-  if(prd.depth < pushC.bounces && emittance == vec3(0.0f))
+  vec3  albedo    = mat.pbrBaseColorFactor.xyz;
+  if(mat.pbrBaseColorTexture > -1)
   {
-    prd.depth++;
+    uint txtId = mat.pbrBaseColorTexture;
+    albedo *= texture(texturesMap[nonuniformEXT(txtId)], texcoord0).xyz;
+  }
 
-    // Getting the 3 indices of the triangle (local)
-    ivec3 triangleIndex = ivec3(indices[nonuniformEXT(indexOffset + 0)],  //
-                                indices[nonuniformEXT(indexOffset + 1)],  //
-                                indices[nonuniformEXT(indexOffset + 2)]);
-    triangleIndex += ivec3(vertexOffset);  // (global)
+  if(emittance != vec3(0))
+  {
+    prd.radiance = emittance;
+    prd.normal   = world_normal;
+    prd.albedo   = albedo;
+    return;
+  }
 
-    const vec3 barycentrics = vec3(1.0 - attribs.x - attribs.y, attribs.x, attribs.y);
-
-    // Vertex of the triangle
-    const vec3 pos0           = getVertex(triangleIndex.x);
-    const vec3 pos1           = getVertex(triangleIndex.y);
-    const vec3 pos2           = getVertex(triangleIndex.z);
-    const vec3 position       = pos0 * barycentrics.x + pos1 * barycentrics.y + pos2 * barycentrics.z;
-    const vec3 world_position = vec3(gl_ObjectToWorldEXT * vec4(position, 1.0));
-
-    // Normal
-    const vec3 nrm0 = getNormal(triangleIndex.x);
-    const vec3 nrm1 = getNormal(triangleIndex.y);
-    const vec3 nrm2 = getNormal(triangleIndex.z);
-    vec3 normal = normalize(nrm0 * barycentrics.x + nrm1 * barycentrics.y + nrm2 * barycentrics.z);
-    const vec3 world_normal = normalize(vec3(normal * gl_WorldToObjectEXT));
-    const vec3 geom_normal  = normalize(cross(pos1 - pos0, pos2 - pos0));
-
-    // TexCoord
-    const vec2 uv0       = getTexCoord(triangleIndex.x);
-    const vec2 uv1       = getTexCoord(triangleIndex.y);
-    const vec2 uv2       = getTexCoord(triangleIndex.z);
-    const vec2 texcoord0 = uv0 * barycentrics.x + uv1 * barycentrics.y + uv2 * barycentrics.z;
-
-    // Pick a random direction from here and keep going.
-    vec3 rayOrigin    = world_position;
-    vec3  albedo    = mat.pbrBaseColorFactor.xyz;
-    if(mat.pbrBaseColorTexture > -1)
+  vec3 attenuation = prd.attenuation * albedo / M_PI;
+  vec3 indirect = vec3(0);
+  { // indirect lighting
+    for(int i = 0; i < pushC.bounceSamples; i++)
     {
-      uint txtId = mat.pbrBaseColorTexture;
-      albedo *= texture(texturesMap[nonuniformEXT(txtId)], texcoord0).xyz;
+      vec3 origin = world_position;
+      //vec3 rayDirection = reflect(prd.rayDirection, world_normal);
+      vec3 direction = sampleLambert(prd.seed, createTBN(world_normal));
+      //vec3 rayDirection = samplePhong(prd.seed, createTBN(reflect(prd.rayDirection, world_normal)), 8.0f);
+      //vec3 rayDirection =  sampleGGX(prd.seed, createTBN(reflect(prd.rayDirection, world_normal)), 0.2f);
+
+      prd.attenuation = attenuation;
+
+      traceRayEXT(topLevelAS,            // acceleration structure
+                  gl_RayFlagsOpaqueEXT,  // rayFlags
+                  0xFF,                  // cullMask
+                  0,                     // sbtRecordOffset
+                  0,                     // sbtRecordStride
+                  0,                     // missIndex
+                  origin,                // ray origin
+                  0.001,                 // ray min range
+                  direction,             // ray direction
+                  10000.0,               // ray max range
+                  0                      // payload (location = 0)
+      );
+
+      indirect += prd.radiance;
     }
-    vec3 BRDF = albedo / M_PI;
-
-    vec3 incoming = vec3(0);
-
-    { // indirect lighting
-      for(int i = 0; i < pushC.bounceSamples; i++)
-      {
-        //vec3 rayDirection = reflect(prd.rayDirection, world_normal);
-        vec3 rayDirection = sampleLambert(prd.seed, createTBN(world_normal));
-        //vec3 rayDirection = samplePhong(prd.seed, createTBN(reflect(prd.rayDirection, world_normal)), 8.0f);
-        //vec3 rayDirection =  sampleGGX(prd.seed, createTBN(reflect(prd.rayDirection, world_normal)), 0.2f);
-        // Compute the BRDF for this ray (assuming Lambertian reflection)
-        float cos_theta = dot(rayDirection, world_normal);
-
-        float tMin  = 0.001;
-        float tMax  = 100000000.0;
-        uint  flags = gl_RayFlagsOpaqueEXT;
-        traceRayEXT(topLevelAS,    // acceleration structure
-                    flags,         // rayFlags
-                    0xFF,          // cullMask
-                    0,             // sbtRecordOffset
-                    0,             // sbtRecordStride
-                    0,             // missIndex
-                    rayOrigin,     // ray origin
-                    tMin,          // ray min range
-                    rayDirection,  // ray direction
-                    tMax,          // ray max range
-                    0              // payload (location = 0)
-        );
-        incoming += BRDF * prd.hitValue;
-      }
-      // Apply the Rendering Equation here.
-    }
-
-    if (pushC.lightType != -1) { //direct lighting
-      // Vector toward the light
-      vec3  L;
-      float lightIntensity = pushC.lightIntensity;
-      float lightDistance  = 100000.0;
-      // Point light
-      if(pushC.lightType == 0)
-      {
-        vec3 lDir      = pushC.lightPosition - world_position;
-        lightDistance  = length(lDir);
-        lightIntensity = pushC.lightIntensity / (lightDistance * lightDistance);
-        L              = normalize(lDir);
-      }
-      else  // Directional light
-      {
-        L = normalize(pushC.lightPosition - vec3(0));
-      }
-
-      vec3 diffuse = computeDiffuse(mat, L, normal) * albedo;
-
-      vec3  specular    = vec3(0);
-      float attenuation = 1;
-
-      float NdotL = clamp(dot(normal, L), 0, 1);
-
-      if(NdotL > 0)
-      {
-        float tMin   = 0.001;
-        float tMax   = lightDistance;
-        vec3  origin = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
-        vec3  rayDir = L;
-        uint  flags  = gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT
-                 | gl_RayFlagsSkipClosestHitShaderEXT;
-        isShadowed = true;
-        traceRayEXT(topLevelAS,  // acceleration structure
-                    flags,       // rayFlags
-                    0xFF,        // cullMask
-                    0,           // sbtRecordOffset
-                    0,           // sbtRecordStride
-                    1,           // missIndex
-                    origin,      // ray origin
-                    tMin,        // ray min range
-                    rayDir,      // ray direction
-                    tMax,        // ray max range
-                    1            // payload (location = 1)
-        );
-
-        if(isShadowed)
-        {
-          attenuation = 0.3;
-        }
-        else
-        {
-          // Specular
-          //specular = computeSpecular(mat, gl_WorldRayDirectionEXT, L, normal);
-        }
-      }
-
-      incoming += vec3(lightIntensity * attenuation * (diffuse + specular));
-    }
-
-    prd.hitValue = incoming / (pushC.lightType != -1 ? pushC.bounceSamples + 1 : pushC.bounceSamples) ;
   }
-  else 
+
+  indirect /= pushC.bounceSamples;
+
+  vec3 direct = vec3(0);
+  if (pushC.lightType != -1) // direct lighting
   {
-    prd.hitValue = emittance;
+    // Vector toward the light
+    vec3  L;
+    float lightIntensity = pushC.lightIntensity;
+    float lightDistance  = 100000.0;
+
+    if(pushC.lightType == 0) // Point light
+    {
+      vec3 lDir      = pushC.lightPosition - world_position;
+      lightDistance  = length(lDir);
+      lightIntensity = pushC.lightIntensity / (lightDistance * lightDistance);
+      L              = normalize(lDir);
+    }
+    else  // Directional light
+    {
+      L = normalize(pushC.lightPosition - vec3(0));
+    }
+
+    float NdotL = max(0.0, dot(normal, L));
+    if(NdotL > 0)
+    {
+      isShadowed = true;
+      traceRayEXT(topLevelAS,      // acceleration structure
+                  gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT | gl_RayFlagsSkipClosestHitShaderEXT,       // rayFlags
+                  0xFF,            // cullMask
+                  0,               // sbtRecordOffset
+                  0,               // sbtRecordStride
+                  1,               // missIndex
+                  world_position,  // ray origin
+                  0.001,           // ray min range
+                  L,               // ray direction
+                  lightDistance,   // ray max range
+                  1                // payload (location = 1)
+      );
+      if(isShadowed)
+      {
+        lightIntensity = 0.0;
+      }
+
+      direct += vec3(1) * NdotL * lightIntensity;
+    }
   }
+  
+  prd.radiance = (indirect + direct) * attenuation;
+  prd.normal   = world_normal;
+  prd.albedo   = albedo;
 }

@@ -1,9 +1,9 @@
 struct hitPayload
 {
-  vec3 hitValue;
+  vec3 radiance;
+  vec3 attenuation;
   uint seed;
   uint depth;
-  vec3 rayOrigin;
-  vec3 rayDirection;
-  vec3 weight;
+  vec3 albedo;
+  vec3 normal;
 };

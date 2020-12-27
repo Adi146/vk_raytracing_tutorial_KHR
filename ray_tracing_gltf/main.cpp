@@ -61,43 +61,41 @@ static void onErrorCallback(int error, const char* description)
 // Extra UI
 void renderUI(HelloVulkan& helloVk, nvmath::vec4f* clearColor)
 {
-  ImGui::TextColored(ImVec4(1,1,0,1), "Common");
+  ImGui::TextColored(ImVec4(1, 1, 0, 1), "Common");
   ImGui::ColorEdit3("Clear color", reinterpret_cast<float*>(clearColor));
   ImGui::SliderInt("Samples", &helloVk.m_rtPushConstants.samples, 1, 16);
   ImGui::SliderInt("Bounces", &helloVk.m_rtPushConstants.bounces, 0, 5);
   ImGui::SliderInt("Samples Per Bounce", &helloVk.m_rtPushConstants.bounceSamples, 1, 4);
 
-  ImGui::TextColored(ImVec4(1,1,0,1), "Direct Lighting");
+  ImGui::TextColored(ImVec4(1, 1, 0, 1), "Direct Lighting");
   ImGui::RadioButton("Off", &helloVk.m_rtPushConstants.lightType, -1);
   ImGui::SameLine();
   ImGui::RadioButton("Point", &helloVk.m_rtPushConstants.lightType, 0);
   ImGui::SameLine();
   ImGui::RadioButton("Infinite", &helloVk.m_rtPushConstants.lightType, 1);
 
-  if (helloVk.m_rtPushConstants.lightType != -1)
+  if(helloVk.m_rtPushConstants.lightType != -1)
   {
     ImGui::SliderFloat3("Light Position", &helloVk.m_rtPushConstants.lightPosition.x, -20.f, 20.f);
     ImGui::SliderFloat("Light Intensity", &helloVk.m_rtPushConstants.lightIntensity, 0.f, 100.f);
   }
 
-  ImGui::TextColored(ImVec4(1,1,0,1), "Temporal Filter");
+  ImGui::TextColored(ImVec4(1, 1, 0, 1), "Temporal Filter");
   ImGui::SliderFloat("Alpha", &helloVk.m_rtPushConstants.temporalAlpha, 0.f, 0.99f);
 
-  ImGui::TextColored(ImVec4(1,1,0,1), "Post Processing");
+  ImGui::TextColored(ImVec4(1, 1, 0, 1), "Post Processing");
   ImGui::RadioButton("Blur Off", &helloVk.m_postPushConstants.kernelType, -1);
   ImGui::SameLine();
   ImGui::RadioButton("Gaussian Blur 3x3", &helloVk.m_postPushConstants.kernelType, 0);
   ImGui::SameLine();
   ImGui::RadioButton("Gaussian Blur 5x5", &helloVk.m_postPushConstants.kernelType, 1);
 
-  ImGui::TextColored(ImVec4(1,1,0,1), "A-Trous");
+  ImGui::TextColored(ImVec4(1, 1, 0, 1), "A-Trous");
   ImGui::SliderFloat("C_Phi", &helloVk.m_c_phi0, 0.0f, 1.0f);
   ImGui::SliderFloat("N_Phi", &helloVk.m_n_phi0, 0.0f, 100.0f);
   ImGui::SliderFloat("P_Phi", &helloVk.m_p_phi0, 0.0f, 100.0f);
-  ImGui::Text(
-    "Application average %.3f ms/frame (%.1f FPS)",
-    1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate
-  );
+  ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate,
+              ImGui::GetIO().Framerate);
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -213,8 +211,8 @@ int main(int argc, char** argv)
   helloVk.createUniformBuffer();
   helloVk.updateDescriptorSet();
 
-  helloVk.createGBufferRender();
-  helloVk.createGBufferPipeline();
+  helloVk.m_gbuffer.createRender(helloVk.getSize());
+  helloVk.m_gbuffer.createPipeline(&helloVk.m_descSetLayout, defaultSearchPaths);
 
   helloVk.createATrousRender();
   helloVk.createATrousDescriptor();
@@ -233,7 +231,7 @@ int main(int argc, char** argv)
   helloVk.createPostPipeline();
   helloVk.updatePostDescriptorSet();
 
-  nvmath::vec4f clearColor   = nvmath::vec4f(1, 1, 1, 1.00f);
+  nvmath::vec4f clearColor = nvmath::vec4f(1, 1, 1, 1.00f);
 
   helloVk.setupGlfwCallbacks(window);
   ImGui_ImplGlfw_InitForVulkan(window, true);
@@ -257,7 +255,7 @@ int main(int argc, char** argv)
 
     // Start command buffer of this frame
     auto                     curFrame = helloVk.getCurFrame();
-    const vk::CommandBuffer& cmdBuf  = helloVk.getCommandBuffers()[curFrame];
+    const vk::CommandBuffer& cmdBuf   = helloVk.getCommandBuffers()[curFrame];
 
     cmdBuf.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 
@@ -280,12 +278,23 @@ int main(int argc, char** argv)
       vk::RenderPassBeginInfo gBufferRenderPassBeginInfo;
       gBufferRenderPassBeginInfo.setClearValueCount(4);
       gBufferRenderPassBeginInfo.setPClearValues(gBufferClearValues);
-      gBufferRenderPassBeginInfo.setRenderPass(helloVk.m_gBufferRenderPass);
-      gBufferRenderPassBeginInfo.setFramebuffer(helloVk.m_gBufferFramebuffer);
+      gBufferRenderPassBeginInfo.setRenderPass(helloVk.m_gbuffer.m_RenderPass);
+      gBufferRenderPassBeginInfo.setFramebuffer(helloVk.m_gbuffer.m_Framebuffer);
       gBufferRenderPassBeginInfo.setRenderArea({{}, helloVk.getSize()});
 
       cmdBuf.beginRenderPass(gBufferRenderPassBeginInfo, vk::SubpassContents::eInline);
-      helloVk.drawGBuffer(cmdBuf);
+      helloVk.m_gbuffer.draw
+      (
+        cmdBuf,
+        helloVk.m_descSet,
+        std::vector<vk::Buffer>
+        {
+          helloVk.m_vertexBuffer.buffer,
+          helloVk.m_normalBuffer.buffer,
+          helloVk.m_uvBuffer.buffer
+        },
+        helloVk.m_indexBuffer.buffer,
+        helloVk.m_gltfScene);
       cmdBuf.endRenderPass();
     }
 

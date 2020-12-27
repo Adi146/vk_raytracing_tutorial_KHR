@@ -37,6 +37,8 @@
 #include "nvh/gltfscene.hpp"
 #include "nvvk/raytraceKHR_vk.hpp"
 
+#include "gbuffer.h"
+
 //--------------------------------------------------------------------------------------------------
 // Simple rasterizer of OBJ objects
 // - Each OBJ loaded are stored in an `ObjModel` and referenced by a `ObjInstance`
@@ -98,23 +100,7 @@ public:
   nvvk::AllocatorDedicated m_alloc;  // Allocator for buffer, images, acceleration structures
   nvvk::DebugUtil          m_debug;  // Utility to name objects
 
-  // # GBuffer
-  void createGBufferRender();
-  void createGBufferPipeline();
-  void drawGBuffer(const vk::CommandBuffer& cmdBuf);
-
-  vk::Pipeline                m_gBufferPipeline;
-  vk::PipelineLayout          m_gBufferPipelineLayout;
-  vk::RenderPass              m_gBufferRenderPass;
-  vk::Framebuffer             m_gBufferFramebuffer;
-  vk::Format                  m_positionColorFormat{vk::Format::eR32G32B32A32Sfloat};
-  nvvk::Texture               m_position;
-  vk::Format                  m_normalColorFormat{vk::Format::eR32G32B32A32Sfloat};
-  nvvk::Texture               m_normal;
-  vk::Format                  m_colorColorFormat{vk::Format::eR8G8B8A8Unorm};
-  nvvk::Texture               m_color;
-  vk::Format                  m_depthColorFormat{vk::Format::eD32Sfloat};
-  nvvk::Texture               m_depth;
+  GBuffer m_gbuffer;
 
   // #A-Trous
   void createATrousRender();

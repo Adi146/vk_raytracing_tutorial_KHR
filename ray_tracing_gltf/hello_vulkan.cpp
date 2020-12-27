@@ -25,9 +25,9 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <iostream>
 #include <sstream>
 #include <vulkan/vulkan.hpp>
-#include <iostream>
 
 extern std::vector<std::string> defaultSearchPaths;
 
@@ -73,6 +73,8 @@ void HelloVulkan::setup(const vk::Instance&       instance,
   AppBase::setup(instance, device, physicalDevice, queueFamily);
   m_alloc.init(device, physicalDevice);
   m_debug.setup(m_device);
+
+  m_gbuffer.setup(device, physicalDevice, queueFamily, &m_alloc);
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -372,14 +374,7 @@ void HelloVulkan::destroyResources()
   m_device.destroy(m_offscreenFramebuffer);
 
   //# GBuffer
-  m_device.destroy(m_gBufferPipeline);
-  m_device.destroy(m_gBufferPipelineLayout);
-  m_alloc.destroy(m_position);
-  m_alloc.destroy(m_normal);
-  m_alloc.destroy(m_color);
-  m_alloc.destroy(m_depth);
-  m_device.destroy(m_gBufferRenderPass);
-  m_device.destroy(m_gBufferFramebuffer);
+  m_gbuffer.destroy();
 
   //#A-Trous
   m_device.destroy(m_aTrousPipeline);
@@ -407,199 +402,12 @@ void HelloVulkan::destroyResources()
 void HelloVulkan::onResize(int /*w*/, int /*h*/)
 {
   createOffscreenRender();
-  createGBufferRender();
+  m_gbuffer.createRender(m_size);
   createATrousRender();
 
   updatePostDescriptorSet();
   updateATrousDescriptorSet();
   updateRtDescriptorSet();
-
-}
-
-//////////////////////////////////////////////////////////////////////////
-// Post-processing
-//////////////////////////////////////////////////////////////////////////
-
-//--------------------------------------------------------------------------------------------------
-// Creating an offscreen frame buffer and the associated render pass
-//
-void HelloVulkan::createGBufferRender()
-{
-  m_alloc.destroy(m_position);
-  m_alloc.destroy(m_normal);
-  m_alloc.destroy(m_color);
-
-  //position map
-  {
-    auto positionCreateInfo = nvvk::makeImage2DCreateInfo(m_size, m_positionColorFormat,
-                                                          vk::ImageUsageFlagBits::eColorAttachment |
-                                                          vk::ImageUsageFlagBits::eSampled);
-    nvvk::Image image       = m_alloc.createImage(positionCreateInfo);
-    vk::ImageViewCreateInfo ivInfo;
-    ivInfo.setViewType(vk::ImageViewType::e2D);
-    ivInfo.setFormat(m_positionColorFormat);
-    ivInfo.setSubresourceRange({vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
-    ivInfo.setImage(image.image);
-
-    m_position = m_alloc.createTexture(image, ivInfo, vk::SamplerCreateInfo());
-  }
-
-  //normal map
-  {
-    auto normalCreateInfo = nvvk::makeImage2DCreateInfo(m_size, m_normalColorFormat,
-                                                        vk::ImageUsageFlagBits::eColorAttachment |
-                                                        vk::ImageUsageFlagBits::eSampled);
-    nvvk::Image image     = m_alloc.createImage(normalCreateInfo);
-    vk::ImageViewCreateInfo ivInfo;
-    ivInfo.setViewType(vk::ImageViewType::e2D);
-    ivInfo.setFormat(m_normalColorFormat);
-    ivInfo.setSubresourceRange({vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
-    ivInfo.setImage(image.image);
-
-    m_normal = m_alloc.createTexture(image, ivInfo, vk::SamplerCreateInfo());
-  }
-
-  //color map
-  {
-    auto colorCreateInfo = nvvk::makeImage2DCreateInfo(m_size, m_colorColorFormat,
-                                                       vk::ImageUsageFlagBits::eColorAttachment |
-                                                       vk::ImageUsageFlagBits::eSampled);
-    nvvk::Image image    = m_alloc.createImage(colorCreateInfo);
-    vk::ImageViewCreateInfo ivInfo;
-    ivInfo.setViewType(vk::ImageViewType::e2D);
-    ivInfo.setFormat(m_colorColorFormat);
-    ivInfo.setSubresourceRange({vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
-    ivInfo.setImage(image.image);
-
-    m_color = m_alloc.createTexture(image, ivInfo, vk::SamplerCreateInfo());
-  }
-
-  //depth map
-  {
-    auto depthCreateInfo = nvvk::makeImage2DCreateInfo(m_size, m_depthColorFormat,
-                                                       vk::ImageUsageFlagBits::eDepthStencilAttachment);
-    nvvk::Image image    = m_alloc.createImage(depthCreateInfo);
-    vk::ImageViewCreateInfo ivInfo;
-    ivInfo.setViewType(vk::ImageViewType::e2D);
-    ivInfo.setFormat(m_depthColorFormat);
-    ivInfo.setSubresourceRange({vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1});
-    ivInfo.setImage(image.image);
-
-    m_depth = m_alloc.createTexture(image, ivInfo);
-  }
-
-  {
-    nvvk::CommandPool genCmdBuf(m_device, m_graphicsQueueIndex);
-    auto              cmdBuf = genCmdBuf.createCommandBuffer();
-    nvvk::cmdBarrierImageLayout(cmdBuf, m_position.image, vk::ImageLayout::eUndefined,
-                                vk::ImageLayout::eGeneral);
-    nvvk::cmdBarrierImageLayout(cmdBuf, m_normal.image, vk::ImageLayout::eUndefined,
-                                vk::ImageLayout::eGeneral);
-    nvvk::cmdBarrierImageLayout(cmdBuf, m_color.image, vk::ImageLayout::eUndefined,
-                                vk::ImageLayout::eGeneral);
-    nvvk::cmdBarrierImageLayout(cmdBuf, m_depth.image, vk::ImageLayout::eUndefined,
-                                vk::ImageLayout::eDepthStencilAttachmentOptimal,
-                                vk::ImageAspectFlagBits::eDepth);
-
-    genCmdBuf.submitAndWait(cmdBuf);
-  }
-
-    // Creating a renderpass for the g-buffer
-  if(!m_gBufferRenderPass)
-  {
-    m_gBufferRenderPass =
-        nvvk::createRenderPass(m_device, {m_positionColorFormat, m_normalColorFormat, m_colorColorFormat}, m_depthColorFormat, 1, true,
-                               true, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
-  }
-
-  // Creating the frame buffer for g-buffer
-  std::vector<vk::ImageView> attachments = {m_position.descriptor.imageView,
-                                            m_normal.descriptor.imageView,
-                                            m_color.descriptor.imageView,
-                                            m_depth.descriptor.imageView};
-
-  m_device.destroy(m_gBufferFramebuffer);
-  vk::FramebufferCreateInfo info;
-  info.setRenderPass(m_gBufferRenderPass);
-  info.setAttachmentCount(4);
-  info.setPAttachments(attachments.data());
-  info.setWidth(m_size.width);
-  info.setHeight(m_size.height);
-  info.setLayers(1);
-  m_gBufferFramebuffer = m_device.createFramebuffer(info);
-}
-
-void HelloVulkan::createGBufferPipeline()
-{
-  // Push constants in the fragment shader
-  vk::PushConstantRange pushConstantRanges = {vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, sizeof(ObjPushConstant)};
-
-  // Creating the Pipeline Layout
-  vk::PipelineLayoutCreateInfo pipelineLayoutCreateInfo;
-  pipelineLayoutCreateInfo.setSetLayoutCount(1);
-  pipelineLayoutCreateInfo.setPSetLayouts(&m_descSetLayout);
-  pipelineLayoutCreateInfo.setPushConstantRangeCount(1);
-  pipelineLayoutCreateInfo.setPPushConstantRanges(&pushConstantRanges);
-  m_gBufferPipelineLayout = m_device.createPipelineLayout(pipelineLayoutCreateInfo);
-
-  // Creating the Pipeline
-  std::vector<std::string>                paths = defaultSearchPaths;
-  nvvk::GraphicsPipelineGeneratorCombined pipelineGenerator(m_device, m_gBufferPipelineLayout,
-                                                            m_gBufferRenderPass);
-  vk::PipelineColorBlendAttachmentState blendState;
-  blendState.blendEnable = VK_FALSE;
-  blendState.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
-
-  pipelineGenerator.setBlendAttachmentState(0, blendState);
-  pipelineGenerator.addBlendAttachmentState(blendState);
-  pipelineGenerator.addBlendAttachmentState(blendState);
-  pipelineGenerator.addShader(nvh::loadFile("shaders/gBuffer.vert.spv", true, paths, true),
-                                            vk::ShaderStageFlagBits::eVertex);
-  pipelineGenerator.addShader(nvh::loadFile("shaders/gBuffer.frag.spv", true, paths, true),
-                                            vk::ShaderStageFlagBits::eFragment);
-  pipelineGenerator.addBindingDescriptions(
-      {{0, sizeof(nvmath::vec3)}, {1, sizeof(nvmath::vec3)}, {2, sizeof(nvmath::vec2)}});
-  pipelineGenerator.addAttributeDescriptions({
-      {0, 0, vk::Format::eR32G32B32Sfloat, 0},  // Position
-      {1, 1, vk::Format::eR32G32B32Sfloat, 0},  // Normal
-      {2, 2, vk::Format::eR32G32Sfloat, 0},     // Texcoord0
-  });
-  m_gBufferPipeline = pipelineGenerator.createPipeline();
-  m_debug.setObjectName(m_gBufferPipeline, "gBuffer");
-}
-
-void HelloVulkan::drawGBuffer(const vk::CommandBuffer& cmdBuf)
-{
-  std::vector<vk::DeviceSize> offsets = {0, 0, 0};
-  m_debug.beginLabel(cmdBuf, "GBuffer");
-
-  // Dynamic Viewport
-  cmdBuf.setViewport(0, {vk::Viewport(0, 0, (float)m_size.width, (float)m_size.height, 0, 1)});
-  cmdBuf.setScissor(0, {{{0, 0}, {m_size.width, m_size.height}}});
-
-  // Drawing all triangles
-  cmdBuf.bindPipeline(vk::PipelineBindPoint::eGraphics, m_gBufferPipeline);
-  cmdBuf.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, m_gBufferPipelineLayout, 0, {m_descSet}, {});
-  std::vector<vk::Buffer> vertexBuffers = {m_vertexBuffer.buffer, m_normalBuffer.buffer,
-                                           m_uvBuffer.buffer};
-  cmdBuf.bindVertexBuffers(0, static_cast<uint32_t>(vertexBuffers.size()), vertexBuffers.data(),
-                           offsets.data());
-  cmdBuf.bindIndexBuffer(m_indexBuffer.buffer, 0, vk::IndexType::eUint32);
-
-  uint32_t idxNode = 0;
-  for(auto& node : m_gltfScene.m_nodes)
-  {
-    auto& primitive = m_gltfScene.m_primMeshes[node.primMesh];
-
-    m_pushConstant.instanceId = idxNode++;
-    m_pushConstant.materialId = primitive.materialIndex;
-    cmdBuf.pushConstants<ObjPushConstant>(
-        m_gBufferPipelineLayout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0,
-        m_pushConstant);
-    cmdBuf.drawIndexed(primitive.indexCount, 1, primitive.firstIndex, primitive.vertexOffset, 0);
-  }
-
-  m_debug.endLabel(cmdBuf);
 }
 
 void HelloVulkan::createATrousRender()
@@ -713,8 +521,8 @@ void HelloVulkan::updateATrousDescriptorSet()
   {
     std::vector<vk::WriteDescriptorSet> writes;
     writes.emplace_back(m_aTrousDescSetLayoutBind.makeWrite(m_aTrousDescSetPing, 0, &m_aTrousTexturePong.descriptor));
-    writes.emplace_back(m_aTrousDescSetLayoutBind.makeWrite(m_aTrousDescSetPing, 1, &m_position.descriptor));
-    writes.emplace_back(m_aTrousDescSetLayoutBind.makeWrite(m_aTrousDescSetPing, 2, &m_normal.descriptor));
+    writes.emplace_back(m_aTrousDescSetLayoutBind.makeWrite(m_aTrousDescSetPing, 1, &m_gbuffer.m_position.descriptor));
+    writes.emplace_back(m_aTrousDescSetLayoutBind.makeWrite(m_aTrousDescSetPing, 2, &m_gbuffer.m_normal.descriptor));
 
     m_device.updateDescriptorSets(static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
   }
@@ -722,8 +530,8 @@ void HelloVulkan::updateATrousDescriptorSet()
   {
     std::vector<vk::WriteDescriptorSet> writes;
     writes.emplace_back(m_aTrousDescSetLayoutBind.makeWrite(m_aTrousDescSetPong, 0, &m_aTrousTexturePing.descriptor));
-    writes.emplace_back(m_aTrousDescSetLayoutBind.makeWrite(m_aTrousDescSetPong, 1, &m_position.descriptor));
-    writes.emplace_back(m_aTrousDescSetLayoutBind.makeWrite(m_aTrousDescSetPong, 2, &m_normal.descriptor));
+    writes.emplace_back(m_aTrousDescSetLayoutBind.makeWrite(m_aTrousDescSetPong, 1, &m_gbuffer.m_position.descriptor));
+    writes.emplace_back(m_aTrousDescSetLayoutBind.makeWrite(m_aTrousDescSetPong, 2, &m_gbuffer.m_normal.descriptor));
 
     m_device.updateDescriptorSets(static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
   }
@@ -742,29 +550,32 @@ void HelloVulkan::drawATrous(const vk::CommandBuffer& cmdBuf)
 
   for (int i = 0; i <= 5; i++)
   {
-      m_aTrousPushConstant.stepwidth = i * 2 + 1;
-      m_aTrousPushConstant.c_phi = 1.0f/ i * m_c_phi0;
-      m_aTrousPushConstant.n_phi = 1.0f/ i * m_n_phi0;
-      m_aTrousPushConstant.p_phi = 1.0f/ i * m_p_phi0;
+    m_aTrousPushConstant.stepwidth = i * 2 + 1;
+    m_aTrousPushConstant.c_phi     = 1.0f / i * m_c_phi0;
+    m_aTrousPushConstant.n_phi     = 1.0f / i * m_n_phi0;
+    m_aTrousPushConstant.p_phi     = 1.0f / i * m_p_phi0;
 
-      vk::RenderPassBeginInfo renderPassBeginInfo;
-      renderPassBeginInfo.setClearValueCount(1);
-      renderPassBeginInfo.setPClearValues(clearValues);
-      renderPassBeginInfo.setRenderPass(m_aTrousRenderPass);
-      renderPassBeginInfo.setFramebuffer((i % 2 == 0) ? m_aTrousFramebufferPong : m_aTrousFramebufferPing);
-      renderPassBeginInfo.setRenderArea({{}, m_size});
+    vk::RenderPassBeginInfo renderPassBeginInfo;
+    renderPassBeginInfo.setClearValueCount(1);
+    renderPassBeginInfo.setPClearValues(clearValues);
+    renderPassBeginInfo.setRenderPass(m_aTrousRenderPass);
+    renderPassBeginInfo.setFramebuffer((i % 2 == 0) ? m_aTrousFramebufferPong :
+                                                      m_aTrousFramebufferPing);
+    renderPassBeginInfo.setRenderArea({{}, m_size});
 
-      cmdBuf.beginRenderPass(renderPassBeginInfo, vk::SubpassContents::eInline);
-      // Rendering tonemapper
-      cmdBuf.setViewport(0, {vk::Viewport(0, 0, (float)m_size.width, (float)m_size.height, 0, 1)});
-      cmdBuf.setScissor(0, {{{0, 0}, {m_size.width, m_size.height}}});
+    cmdBuf.beginRenderPass(renderPassBeginInfo, vk::SubpassContents::eInline);
+    // Rendering tonemapper
+    cmdBuf.setViewport(0, {vk::Viewport(0, 0, (float)m_size.width, (float)m_size.height, 0, 1)});
+    cmdBuf.setScissor(0, {{{0, 0}, {m_size.width, m_size.height}}});
 
-      cmdBuf.bindPipeline(vk::PipelineBindPoint::eGraphics, m_aTrousPipeline);
-      cmdBuf.pushConstants<ATrousPushConstants>(m_aTrousPipelineLayout, vk::ShaderStageFlagBits::eFragment, 0, m_aTrousPushConstant);
-      cmdBuf.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, m_aTrousPipelineLayout, 0, (i % 2 == 0) ? m_aTrousDescSetPong : m_aTrousDescSetPing, {});
-      cmdBuf.draw(3, 1, 0, 0);
+    cmdBuf.bindPipeline(vk::PipelineBindPoint::eGraphics, m_aTrousPipeline);
+    cmdBuf.pushConstants<ATrousPushConstants>(
+        m_aTrousPipelineLayout, vk::ShaderStageFlagBits::eFragment, 0, m_aTrousPushConstant);
+    cmdBuf.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, m_aTrousPipelineLayout, 0,
+                              (i % 2 == 0) ? m_aTrousDescSetPong : m_aTrousDescSetPing, {});
+    cmdBuf.draw(3, 1, 0, 0);
 
-      cmdBuf.endRenderPass();
+    cmdBuf.endRenderPass();
   }
 
   m_debug.endLabel(cmdBuf);
@@ -1022,7 +833,7 @@ void HelloVulkan::createRtDescriptorSet()
 
   m_rtDescSetLayoutBind.addBinding // TLAS
   (
-    vkDSLB(0, vkDT::eAccelerationStructureKHR, 1, vkSS::eRaygenKHR | vkSS::eClosestHitKHR )
+    vkDSLB(0, vkDT::eAccelerationStructureKHR, 1, vkSS::eRaygenKHR | vkSS::eClosestHitKHR)
   );
   m_rtDescSetLayoutBind.addBinding // Output image
   (
@@ -1054,7 +865,7 @@ void HelloVulkan::createRtDescriptorSet()
   {
     {}, m_offscreenColor.descriptor.imageView, vk::ImageLayout::eGeneral
   };
-  
+
   vk::DescriptorBufferInfo primitiveInfoDesc{m_rtPrimLookup.buffer, 0, VK_WHOLE_SIZE};
 
   std::vector<vk::WriteDescriptorSet> writes;
@@ -1237,7 +1048,7 @@ void HelloVulkan::raytrace(const vk::CommandBuffer& cmdBuf, const nvmath::vec4f&
 
   m_debug.beginLabel(cmdBuf, "Ray trace");
   // Initializing push constant values
-  m_rtPushConstants.clearColor     = clearColor;
+  m_rtPushConstants.clearColor = clearColor;
 
   cmdBuf.bindPipeline(vk::PipelineBindPoint::eRayTracingKHR, m_rtPipeline);
   cmdBuf.bindDescriptorSets(vk::PipelineBindPoint::eRayTracingKHR, m_rtPipelineLayout, 0,

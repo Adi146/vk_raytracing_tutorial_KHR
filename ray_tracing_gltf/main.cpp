@@ -84,11 +84,11 @@ void renderUI(HelloVulkan& helloVk, nvmath::vec4f* clearColor)
   ImGui::SliderFloat("Alpha", &helloVk.m_rtPushConstants.temporalAlpha, 0.f, 0.99f);
 
   ImGui::TextColored(ImVec4(1, 1, 0, 1), "Post Processing");
-  ImGui::RadioButton("Blur Off", &helloVk.m_postPushConstants.kernelType, -1);
+  ImGui::RadioButton("Blur Off", &helloVk.m_postprocessing.m_pushConstants.kernelType, -1);
   ImGui::SameLine();
-  ImGui::RadioButton("Gaussian Blur 3x3", &helloVk.m_postPushConstants.kernelType, 0);
+  ImGui::RadioButton("Gaussian Blur 3x3", &helloVk.m_postprocessing.m_pushConstants.kernelType, 0);
   ImGui::SameLine();
-  ImGui::RadioButton("Gaussian Blur 5x5", &helloVk.m_postPushConstants.kernelType, 1);
+  ImGui::RadioButton("Gaussian Blur 5x5", &helloVk.m_postprocessing.m_pushConstants.kernelType, 1);
 
   ImGui::TextColored(ImVec4(1, 1, 0, 1), "A-Trous");
   ImGui::SliderFloat("C_Phi", &helloVk.m_c_phi0, 0.0f, 1.0f);
@@ -207,6 +207,7 @@ int main(int argc, char** argv)
   //helloVk.loadScene(nvh::findFile("../glTF-Sample-Models/2.0/Sponza/glTF/Sponza.gltf", defaultSearchPaths));
 
   helloVk.createOffscreenRender();
+
   helloVk.createDescriptorSetLayout();
   helloVk.createUniformBuffer();
   helloVk.updateDescriptorSet();
@@ -227,8 +228,9 @@ int main(int argc, char** argv)
   helloVk.createRtPipeline();
   helloVk.createRtShaderBindingTable();
 
-  helloVk.createPostDescriptor();
-  helloVk.createPostPipeline();
+  helloVk.m_postprocessing.createRender(helloVk.getSize(), helloVk.getRenderPass());
+  helloVk.m_postprocessing.createDescriptorSet();
+  helloVk.m_postprocessing.createPipeline(&helloVk.m_postprocessing.m_DescSetLayout, defaultSearchPaths);
   helloVk.updatePostDescriptorSet();
 
   nvmath::vec4f clearColor = nvmath::vec4f(1, 1, 1, 1.00f);
@@ -320,13 +322,13 @@ int main(int argc, char** argv)
       vk::RenderPassBeginInfo postRenderPassBeginInfo;
       postRenderPassBeginInfo.setClearValueCount(2);
       postRenderPassBeginInfo.setPClearValues(clearValues);
-      postRenderPassBeginInfo.setRenderPass(helloVk.getRenderPass());
+      postRenderPassBeginInfo.setRenderPass(helloVk.m_postprocessing.m_RenderPass);
       postRenderPassBeginInfo.setFramebuffer(helloVk.getFramebuffers()[curFrame]);
       postRenderPassBeginInfo.setRenderArea({{}, helloVk.getSize()});
 
       cmdBuf.beginRenderPass(postRenderPassBeginInfo, vk::SubpassContents::eInline);
       // Rendering tonemapper
-      helloVk.drawPost(cmdBuf);
+      helloVk.m_postprocessing.draw(cmdBuf);
       // Rendering UI
       ImGui::Render();
       // Rendering UI

@@ -38,6 +38,7 @@
 #include "nvvk/raytraceKHR_vk.hpp"
 
 #include "gbuffer.h"
+#include "postprocessing.h"
 
 //--------------------------------------------------------------------------------------------------
 // Simple rasterizer of OBJ objects
@@ -101,6 +102,16 @@ public:
   nvvk::DebugUtil          m_debug;  // Utility to name objects
 
   GBuffer m_gbuffer;
+  PostProcessing m_postprocessing;
+
+  void createOffscreenRender();
+
+  vk::RenderPass              m_offscreenRenderPass;
+  vk::Framebuffer             m_offscreenFramebuffer;
+  nvvk::Texture               m_offscreenColor;
+  vk::Format                  m_offscreenColorFormat{ vk::Format::eR32G32B32A32Sfloat };
+  nvvk::Texture               m_offscreenDepth;
+  vk::Format                  m_offscreenDepthFormat{ vk::Format::eD32Sfloat };
 
   // #A-Trous
   void createATrousRender();
@@ -137,29 +148,7 @@ public:
   float m_p_phi0 = 1E-1f;
 
   // #Post
-  void createOffscreenRender();
-  void createPostPipeline();
-  void createPostDescriptor();
   void updatePostDescriptorSet();
-  void drawPost(vk::CommandBuffer cmdBuf);
-
-  struct PostPushConstant
-  {
-    int kernelType{-1}; // -1: off, 0: Gaussian Blur 3x3, 1: Gaussian Blur 5x5
-  } m_postPushConstants;
-
-  nvvk::DescriptorSetBindings m_postDescSetLayoutBind;
-  vk::DescriptorPool          m_postDescPool;
-  vk::DescriptorSetLayout     m_postDescSetLayout;
-  vk::DescriptorSet           m_postDescSet;
-  vk::Pipeline                m_postPipeline;
-  vk::PipelineLayout          m_postPipelineLayout;
-  vk::RenderPass              m_offscreenRenderPass;
-  vk::Framebuffer             m_offscreenFramebuffer;
-  nvvk::Texture               m_offscreenColor;
-  vk::Format                  m_offscreenColorFormat{vk::Format::eR32G32B32A32Sfloat};
-  nvvk::Texture               m_offscreenDepth;
-  vk::Format                  m_offscreenDepthFormat{vk::Format::eD32Sfloat};
 
   // #VKRay
   nvvk::RaytracingBuilderKHR::BlasInput primitiveToGeometry(const nvh::GltfPrimMesh& prim);

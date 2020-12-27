@@ -5,39 +5,25 @@
 #include "nvh/fileoperations.hpp"
 #include "nvmath/nvmath_glsltypes.h"
 
-void GBuffer::setup
-(
-  const vk::Device&         device,
-  const vk::PhysicalDevice& physicalDevice,
-  uint32_t                  queueIndex,
-  nvvk::Allocator*          allocator
-)
-{
-  m_device     = device;
-  m_debug.setup(device);
-  m_queueIndex = queueIndex;
-  m_alloc      = allocator;
-}
-
 void GBuffer::destroy()
 {
-  m_device.destroy(m_Pipeline);
-  m_device.destroy(m_PipelineLayout);
+  Renderpass::destroy();
+  m_device.destroy(m_RenderPass);
+  m_device.destroy(m_Framebuffer);
+
   m_alloc->destroy(m_position);
   m_alloc->destroy(m_normal);
   m_alloc->destroy(m_color);
   m_alloc->destroy(m_depth);
-  m_device.destroy(m_RenderPass);
-  m_device.destroy(m_Framebuffer);
 }
 
 void GBuffer::createRender(vk::Extent2D size)
 {
+  Renderpass::createRender(size);
+
   m_alloc->destroy(m_position);
   m_alloc->destroy(m_normal);
   m_alloc->destroy(m_color);
-
-  m_outputSize = size;
 
   //position map
   {

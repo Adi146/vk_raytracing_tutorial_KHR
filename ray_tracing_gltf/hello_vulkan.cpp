@@ -75,6 +75,7 @@ void HelloVulkan::setup(const vk::Instance&       instance,
   m_debug.setup(m_device);
 
   m_gbuffer.setup(device, physicalDevice, queueFamily, &m_alloc);
+  m_postprocessing.setup(device, physicalDevice, queueFamily, &m_alloc);
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -364,10 +365,8 @@ void HelloVulkan::destroyResources()
   }
 
   //#Post
-  m_device.destroy(m_postPipeline);
-  m_device.destroy(m_postPipelineLayout);
-  m_device.destroy(m_postDescPool);
-  m_device.destroy(m_postDescSetLayout);
+  m_postprocessing.destroy();
+
   m_alloc.destroy(m_offscreenColor);
   m_alloc.destroy(m_offscreenDepth);
   m_device.destroy(m_offscreenRenderPass);
@@ -402,6 +401,7 @@ void HelloVulkan::destroyResources()
 void HelloVulkan::onResize(int /*w*/, int /*h*/)
 {
   createOffscreenRender();
+  m_postprocessing.createRender(m_size, getRenderPass());
   m_gbuffer.createRender(m_size);
   createATrousRender();
 
@@ -446,7 +446,7 @@ void HelloVulkan::createATrousRender()
   if(!m_aTrousRenderPass)
   {
     m_aTrousRenderPass =
-        nvvk::createRenderPass(m_device, {m_offscreenColorFormat}, vk::Format::eUndefined, 1, true,
+        nvvk::createRenderPass(m_device, { m_offscreenColorFormat }, vk::Format::eUndefined, 1, true,
                                true, vk::ImageLayout::eUndefined, vk::ImageLayout::eGeneral);
   }
 
@@ -633,7 +633,7 @@ void HelloVulkan::createOffscreenRender()
   if(!m_offscreenRenderPass)
   {
     m_offscreenRenderPass =
-        nvvk::createRenderPass(m_device, {m_offscreenColorFormat}, m_offscreenDepthFormat, 1, true,
+        nvvk::createRenderPass(m_device, { m_offscreenColorFormat }, m_offscreenDepthFormat, 1, true,
                                true, vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral);
   }
 
@@ -652,51 +652,6 @@ void HelloVulkan::createOffscreenRender()
   m_offscreenFramebuffer = m_device.createFramebuffer(info);
 }
 
-//--------------------------------------------------------------------------------------------------
-// The pipeline is how things are rendered, which shaders, type of primitives, depth test and more
-//
-void HelloVulkan::createPostPipeline()
-{
-  // Push constants in the fragment shader
-  vk::PushConstantRange pushConstantRanges = {vk::ShaderStageFlagBits::eFragment, 0, sizeof(PostPushConstant)};
-
-  // Creating the pipeline layout
-  vk::PipelineLayoutCreateInfo pipelineLayoutCreateInfo;
-  pipelineLayoutCreateInfo.setSetLayoutCount(1);
-  pipelineLayoutCreateInfo.setPSetLayouts(&m_postDescSetLayout);
-  pipelineLayoutCreateInfo.setPushConstantRangeCount(1);
-  pipelineLayoutCreateInfo.setPPushConstantRanges(&pushConstantRanges);
-  m_postPipelineLayout = m_device.createPipelineLayout(pipelineLayoutCreateInfo);
-
-  // Pipeline: completely generic, no vertices
-  std::vector<std::string> paths = defaultSearchPaths;
-
-  nvvk::GraphicsPipelineGeneratorCombined pipelineGenerator(m_device, m_postPipelineLayout,
-                                                            m_renderPass);
-  pipelineGenerator.addShader(nvh::loadFile("shaders/passthrough.vert.spv", true, paths),
-                              vk::ShaderStageFlagBits::eVertex);
-  pipelineGenerator.addShader(nvh::loadFile("shaders/post.frag.spv", true, paths),
-                              vk::ShaderStageFlagBits::eFragment);
-  pipelineGenerator.rasterizationState.setCullMode(vk::CullModeFlagBits::eNone);
-  m_postPipeline = pipelineGenerator.createPipeline();
-  m_debug.setObjectName(m_postPipeline, "post");
-}
-
-//--------------------------------------------------------------------------------------------------
-// The descriptor layout is the description of the data that is passed to the vertex or the
-// fragment program.
-//
-void HelloVulkan::createPostDescriptor()
-{
-  using vkDS = vk::DescriptorSetLayoutBinding;
-  using vkDT = vk::DescriptorType;
-  using vkSS = vk::ShaderStageFlagBits;
-
-  m_postDescSetLayoutBind.addBinding(vkDS(0, vkDT::eCombinedImageSampler, 1, vkSS::eVertex | vkSS::eFragment));
-  m_postDescSetLayout = m_postDescSetLayoutBind.createLayout(m_device);
-  m_postDescPool      = m_postDescSetLayoutBind.createPool(m_device);
-  m_postDescSet       = nvvk::allocateDescriptorSet(m_device, m_postDescPool, m_postDescSetLayout);
-}
 
 //--------------------------------------------------------------------------------------------------
 // Update the output
@@ -706,33 +661,24 @@ void HelloVulkan::updatePostDescriptorSet()
   std::vector<vk::WriteDescriptorSet> writes;
   if (m_enableATrous)
   {
-    writes.emplace_back(m_postDescSetLayoutBind.makeWrite(m_postDescSet, 0, &m_aTrousTexturePong.descriptor));
+    writes.emplace_back(m_postprocessing.m_DescSetLayoutBind.makeWrite
+    (
+      m_postprocessing.m_DescSet,
+      0,
+      &m_aTrousTexturePong.descriptor
+    ));
   }
   else
   {
-    writes.emplace_back(m_postDescSetLayoutBind.makeWrite(m_postDescSet, 0, &m_offscreenColor.descriptor));
+    writes.emplace_back(m_postprocessing.m_DescSetLayoutBind.makeWrite
+    (
+      m_postprocessing.m_DescSet,
+      0,
+      &m_offscreenColor.descriptor
+    ));
   }
 
   m_device.updateDescriptorSets(static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
-}
-
-//--------------------------------------------------------------------------------------------------
-// Draw a full screen quad with the attached image
-//
-void HelloVulkan::drawPost(vk::CommandBuffer cmdBuf)
-{
-  m_debug.beginLabel(cmdBuf, "Post");
-
-  cmdBuf.setViewport(0, {vk::Viewport(0, 0, (float)m_size.width, (float)m_size.height, 0, 1)});
-  cmdBuf.setScissor(0, {{{0, 0}, {m_size.width, m_size.height}}});
-
-  cmdBuf.pushConstants<PostPushConstant>(m_postPipelineLayout, vk::ShaderStageFlagBits::eFragment, 0, m_postPushConstants);
-  cmdBuf.bindPipeline(vk::PipelineBindPoint::eGraphics, m_postPipeline);
-  cmdBuf.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, m_postPipelineLayout, 0,
-                            m_postDescSet, {});
-  cmdBuf.draw(3, 1, 0, 0);
-
-  m_debug.endLabel(cmdBuf);
 }
 
 //////////////////////////////////////////////////////////////////////////

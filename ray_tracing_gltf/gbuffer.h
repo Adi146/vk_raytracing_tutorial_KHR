@@ -31,12 +31,11 @@ public:
   vk::Framebuffer m_Framebuffer;
 
 private:
-  struct ObjPushConstant
+  struct PushConstant
   {
     int instanceId{0};  // To retrieve the transformation matrix
     int materialId{0};
-  };
-  ObjPushConstant m_pushConstant;
+  } m_pushConstant;
 
   vk::Format         m_positionColorFormat{vk::Format::eR32G32B32A32Sfloat};
   vk::Format         m_normalColorFormat{vk::Format::eR32G32B32A32Sfloat};

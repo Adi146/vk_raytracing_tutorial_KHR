@@ -91,9 +91,9 @@ void renderUI(HelloVulkan& helloVk, nvmath::vec4f* clearColor)
   ImGui::RadioButton("Gaussian Blur 5x5", &helloVk.m_postprocessing.m_pushConstants.kernelType, 1);
 
   ImGui::TextColored(ImVec4(1, 1, 0, 1), "A-Trous");
-  ImGui::SliderFloat("C_Phi", &helloVk.m_c_phi0, 0.0f, 1.0f);
-  ImGui::SliderFloat("N_Phi", &helloVk.m_n_phi0, 0.0f, 100.0f);
-  ImGui::SliderFloat("P_Phi", &helloVk.m_p_phi0, 0.0f, 100.0f);
+  ImGui::SliderFloat("C_Phi", &helloVk.m_atrous.m_c_phi0, 0.0f, 1.0f);
+  ImGui::SliderFloat("N_Phi", &helloVk.m_atrous.m_n_phi0, 0.0f, 100.0f);
+  ImGui::SliderFloat("P_Phi", &helloVk.m_atrous.m_p_phi0, 0.0f, 100.0f);
   ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate,
               ImGui::GetIO().Framerate);
 }
@@ -215,9 +215,9 @@ int main(int argc, char** argv)
   helloVk.m_gbuffer.createRender(helloVk.getSize());
   helloVk.m_gbuffer.createPipeline(&helloVk.m_descSetLayout, defaultSearchPaths);
 
-  helloVk.createATrousRender();
-  helloVk.createATrousDescriptor();
-  helloVk.createATrousPipeline();
+  helloVk.m_atrous.createRender(helloVk.getSize(), helloVk.m_pathtrace.m_outputColor);
+  helloVk.m_atrous.createDescriptorSet();
+  helloVk.m_atrous.createPipeline(&helloVk.m_atrous.m_DescSetLayout, defaultSearchPaths);
   helloVk.updateATrousDescriptorSet();
 
   // #VKRay
@@ -313,7 +313,7 @@ int main(int argc, char** argv)
     }
 
     {
-      helloVk.drawATrous(cmdBuf);
+      helloVk.m_atrous.draw(cmdBuf);
     }
 
     // 2nd rendering pass: tone mapper, UI

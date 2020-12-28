@@ -77,6 +77,7 @@ void HelloVulkan::setup(const vk::Instance&       instance,
   m_gbuffer.setup(device, physicalDevice, queueFamily, &m_alloc);
   m_postprocessing.setup(device, physicalDevice, queueFamily, &m_alloc);
   m_pathtrace.setup(device, physicalDevice, queueFamily, &m_alloc);
+  m_atrous.setup(device, physicalDevice, queueFamily, &m_alloc);
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -372,15 +373,7 @@ void HelloVulkan::destroyResources()
   m_gbuffer.destroy();
 
   //#A-Trous
-  m_device.destroy(m_aTrousPipeline);
-  m_device.destroy(m_aTrousPipelineLayout);
-  m_device.destroy(m_aTrousDescPool);
-  m_device.destroy(m_aTrousDescSetLayout);
-  m_alloc.destroy(m_aTrousTexturePing);
-  m_alloc.destroy(m_aTrousTexturePong);
-  m_device.destroy(m_aTrousRenderPass);
-  m_device.destroy(m_aTrousFramebufferPing);
-  m_device.destroy(m_aTrousFramebufferPong);
+  m_atrous.destroy();
 
   // #VKRay
   m_pathtrace.destroy();
@@ -394,182 +387,32 @@ void HelloVulkan::onResize(int /*w*/, int /*h*/)
   m_pathtrace.createRender(m_size);
   m_postprocessing.createRender(m_size, getRenderPass());
   m_gbuffer.createRender(m_size);
-  createATrousRender();
+  m_atrous.createRender(m_size, m_pathtrace.m_outputColor);
 
   updatePostDescriptorSet();
   updateATrousDescriptorSet();
   updateRtDescriptorSet();
 }
 
-void HelloVulkan::createATrousRender()
-{
-  m_alloc.destroy(m_aTrousTexturePing);
-  m_alloc.destroy(m_aTrousTexturePong);
-
-  {
-    auto textureCreateInfo = nvvk::makeImage2DCreateInfo(m_size, m_aTrousFormat,
-                                                          vk::ImageUsageFlagBits::eColorAttachment |
-                                                          vk::ImageUsageFlagBits::eSampled |
-                                                          vk::ImageUsageFlagBits::eStorage);
-    nvvk::Image ping       = m_alloc.createImage(textureCreateInfo);
-    nvvk::Image pong       = m_alloc.createImage(textureCreateInfo);
-
-    vk::ImageViewCreateInfo ivInfo = nvvk::makeImageViewCreateInfo(ping.image, textureCreateInfo);
-    m_aTrousTexturePing = m_alloc.createTexture(ping, ivInfo, vk::SamplerCreateInfo());
-
-    ivInfo.setImage(pong.image);
-    m_aTrousTexturePong = m_alloc.createTexture(pong, ivInfo, vk::SamplerCreateInfo());
-
-    m_aTrousTexturePing.descriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-    m_aTrousTexturePong.descriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-  }
-
-  {
-    nvvk::CommandPool genCmdBuf(m_device, m_graphicsQueueIndex);
-    auto              cmdBuf = genCmdBuf.createCommandBuffer();
-    nvvk::cmdBarrierImageLayout(cmdBuf, m_aTrousTexturePing.image, vk::ImageLayout::eUndefined,
-                                vk::ImageLayout::eGeneral);
-    nvvk::cmdBarrierImageLayout(cmdBuf, m_aTrousTexturePong.image, vk::ImageLayout::eUndefined,
-                                vk::ImageLayout::eGeneral);
-    genCmdBuf.submitAndWait(cmdBuf);
-  }
-
-  if(!m_aTrousRenderPass)
-  {
-    m_aTrousRenderPass =
-        nvvk::createRenderPass(m_device, { m_aTrousFormat }, vk::Format::eUndefined, 1, true,
-                               true, vk::ImageLayout::eUndefined, vk::ImageLayout::eGeneral);
-  }
-
-
-  m_device.destroy(m_aTrousFramebufferPing);
-  m_device.destroy(m_aTrousFramebufferPong);
-
-  vk::FramebufferCreateInfo info;
-  info.setRenderPass(m_aTrousRenderPass);
-  info.setAttachmentCount(1);
-  info.setWidth(m_size.width);
-  info.setHeight(m_size.height);
-  info.setLayers(1);
-
-  std::vector<vk::ImageView> attachments = {m_aTrousTexturePing.descriptor.imageView};
-  info.setPAttachments(attachments.data());
-  m_aTrousFramebufferPing = m_device.createFramebuffer(info);
-
-  attachments = {m_aTrousTexturePong.descriptor.imageView};
-  info.setPAttachments(attachments.data());
-  m_aTrousFramebufferPong = m_device.createFramebuffer(info);
-}
-
-void HelloVulkan::createATrousPipeline()
-{
-  vk::PushConstantRange pushConstantRanges = {vk::ShaderStageFlagBits::eFragment, 0, sizeof(ATrousPushConstants)};
-
-  // Creating the pipeline layout
-  vk::PipelineLayoutCreateInfo pipelineLayoutCreateInfo;
-  pipelineLayoutCreateInfo.setSetLayoutCount(1);
-  pipelineLayoutCreateInfo.setPSetLayouts(&m_aTrousDescSetLayout);
-  pipelineLayoutCreateInfo.setPushConstantRangeCount(1);
-  pipelineLayoutCreateInfo.setPPushConstantRanges(&pushConstantRanges);
-  m_aTrousPipelineLayout = m_device.createPipelineLayout(pipelineLayoutCreateInfo);
-
-  // Pipeline: completely generic, no vertices
-  std::vector<std::string> paths = defaultSearchPaths;
-
-  nvvk::GraphicsPipelineGeneratorCombined pipelineGenerator(m_device, m_aTrousPipelineLayout,
-                                                            m_aTrousRenderPass);
-  pipelineGenerator.addShader(nvh::loadFile("shaders/passthrough.vert.spv", true, paths, true),
-                              vk::ShaderStageFlagBits::eVertex);
-  pipelineGenerator.addShader(nvh::loadFile("shaders/a-trous.frag.spv", true, paths, true),
-                              vk::ShaderStageFlagBits::eFragment);
-  pipelineGenerator.rasterizationState.setCullMode(vk::CullModeFlagBits::eNone);
-  m_aTrousPipeline = pipelineGenerator.createPipeline();
-  m_debug.setObjectName(m_aTrousPipeline, "a-trous");
-}
-
-//--------------------------------------------------------------------------------------------------
-// The descriptor layout is the description of the data that is passed to the vertex or the
-// fragment program.
-//
-void HelloVulkan::createATrousDescriptor()
-{
-  using vkDS = vk::DescriptorSetLayoutBinding;
-  using vkDT = vk::DescriptorType;
-  using vkSS = vk::ShaderStageFlagBits;
-
-  m_aTrousDescSetLayoutBind.addBinding(vkDS(0, vkDT::eCombinedImageSampler, 1, vkSS::eFragment | vkSS::eVertex));
-  m_aTrousDescSetLayoutBind.addBinding(vkDS(1, vkDT::eCombinedImageSampler, 1, vkSS::eFragment));
-  m_aTrousDescSetLayoutBind.addBinding(vkDS(2, vkDT::eCombinedImageSampler, 1, vkSS::eFragment));
-  m_aTrousDescSetLayout = m_aTrousDescSetLayoutBind.createLayout(m_device);
-  m_aTrousDescPool      = m_aTrousDescSetLayoutBind.createPool(m_device, 2);
-
-  m_aTrousDescSetPing   = nvvk::allocateDescriptorSet(m_device, m_aTrousDescPool, m_aTrousDescSetLayout);
-  m_aTrousDescSetPong   = nvvk::allocateDescriptorSet(m_device, m_aTrousDescPool, m_aTrousDescSetLayout);
-}
-
 void HelloVulkan::updateATrousDescriptorSet()
 {
   {
     std::vector<vk::WriteDescriptorSet> writes;
-    writes.emplace_back(m_aTrousDescSetLayoutBind.makeWrite(m_aTrousDescSetPing, 0, &m_aTrousTexturePong.descriptor));
-    writes.emplace_back(m_aTrousDescSetLayoutBind.makeWrite(m_aTrousDescSetPing, 1, &m_gbuffer.m_position.descriptor));
-    writes.emplace_back(m_aTrousDescSetLayoutBind.makeWrite(m_aTrousDescSetPing, 2, &m_gbuffer.m_normal.descriptor));
+    writes.emplace_back(m_atrous.m_DescSetLayoutBind.makeWrite(m_atrous.m_DescSetPing, 0, &m_atrous.m_TexturePong.descriptor));
+    writes.emplace_back(m_atrous.m_DescSetLayoutBind.makeWrite(m_atrous.m_DescSetPing, 1, &m_gbuffer.m_position.descriptor));
+    writes.emplace_back(m_atrous.m_DescSetLayoutBind.makeWrite(m_atrous.m_DescSetPing, 2, &m_gbuffer.m_normal.descriptor));
 
     m_device.updateDescriptorSets(static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
   }
 
   {
     std::vector<vk::WriteDescriptorSet> writes;
-    writes.emplace_back(m_aTrousDescSetLayoutBind.makeWrite(m_aTrousDescSetPong, 0, &m_aTrousTexturePing.descriptor));
-    writes.emplace_back(m_aTrousDescSetLayoutBind.makeWrite(m_aTrousDescSetPong, 1, &m_gbuffer.m_position.descriptor));
-    writes.emplace_back(m_aTrousDescSetLayoutBind.makeWrite(m_aTrousDescSetPong, 2, &m_gbuffer.m_normal.descriptor));
+    writes.emplace_back(m_atrous.m_DescSetLayoutBind.makeWrite(m_atrous.m_DescSetPong, 0, &m_atrous.m_TexturePing.descriptor));
+    writes.emplace_back(m_atrous.m_DescSetLayoutBind.makeWrite(m_atrous.m_DescSetPong, 1, &m_gbuffer.m_position.descriptor));
+    writes.emplace_back(m_atrous.m_DescSetLayoutBind.makeWrite(m_atrous.m_DescSetPong, 2, &m_gbuffer.m_normal.descriptor));
 
     m_device.updateDescriptorSets(static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
   }
-}
-
-void HelloVulkan::drawATrous(const vk::CommandBuffer& cmdBuf)
-{
-  if (!m_enableATrous)
-    return;
-
-  vk::ClearValue clearValues[1];
-  clearValues[0].setColor(std::array<float, 4>({0, 0, 0, 0}));
-
-  m_debug.beginLabel(cmdBuf, "A-Trous");
-
-
-  for (int i = 0; i <= 5; i++)
-  {
-    m_aTrousPushConstant.stepwidth = i * 2 + 1;
-    m_aTrousPushConstant.c_phi     = 1.0f / i * m_c_phi0;
-    m_aTrousPushConstant.n_phi     = 1.0f / i * m_n_phi0;
-    m_aTrousPushConstant.p_phi     = 1.0f / i * m_p_phi0;
-
-    vk::RenderPassBeginInfo renderPassBeginInfo;
-    renderPassBeginInfo.setClearValueCount(1);
-    renderPassBeginInfo.setPClearValues(clearValues);
-    renderPassBeginInfo.setRenderPass(m_aTrousRenderPass);
-    renderPassBeginInfo.setFramebuffer((i % 2 == 0) ? m_aTrousFramebufferPong :
-                                                      m_aTrousFramebufferPing);
-    renderPassBeginInfo.setRenderArea({{}, m_size});
-
-    cmdBuf.beginRenderPass(renderPassBeginInfo, vk::SubpassContents::eInline);
-    // Rendering tonemapper
-    cmdBuf.setViewport(0, {vk::Viewport(0, 0, (float)m_size.width, (float)m_size.height, 0, 1)});
-    cmdBuf.setScissor(0, {{{0, 0}, {m_size.width, m_size.height}}});
-
-    cmdBuf.bindPipeline(vk::PipelineBindPoint::eGraphics, m_aTrousPipeline);
-    cmdBuf.pushConstants<ATrousPushConstants>(
-        m_aTrousPipelineLayout, vk::ShaderStageFlagBits::eFragment, 0, m_aTrousPushConstant);
-    cmdBuf.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, m_aTrousPipelineLayout, 0,
-                              (i % 2 == 0) ? m_aTrousDescSetPong : m_aTrousDescSetPing, {});
-    cmdBuf.draw(3, 1, 0, 0);
-
-    cmdBuf.endRenderPass();
-  }
-
-  m_debug.endLabel(cmdBuf);
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -578,13 +421,13 @@ void HelloVulkan::drawATrous(const vk::CommandBuffer& cmdBuf)
 void HelloVulkan::updatePostDescriptorSet()
 {
   std::vector<vk::WriteDescriptorSet> writes;
-  if (m_enableATrous)
+  if (m_atrous.m_enabled)
   {
     writes.emplace_back(m_postprocessing.m_DescSetLayoutBind.makeWrite
     (
       m_postprocessing.m_DescSet,
       0,
-      &m_aTrousTexturePong.descriptor
+      &m_atrous.m_TexturePong.descriptor
     ));
   }
   else
@@ -614,7 +457,7 @@ void HelloVulkan::updateRtDescriptorSet()
 
   vk::DescriptorImageInfo outputImageInfo
   {
-    {}, m_aTrousTexturePing.descriptor.imageView, vk::ImageLayout::eGeneral
+    {}, m_pathtrace.m_outputColor.descriptor.imageView, vk::ImageLayout::eGeneral
   };
 
   vk::DescriptorImageInfo historyImageInfo

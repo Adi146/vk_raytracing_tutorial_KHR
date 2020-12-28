@@ -137,7 +137,7 @@ void GBuffer::createPipeline
   // Push constants in the fragment shader
   vk::PushConstantRange pushConstantRanges = {vk::ShaderStageFlagBits::eVertex
                                                   | vk::ShaderStageFlagBits::eFragment,
-                                              0, sizeof(ObjPushConstant)};
+                                              0, sizeof(PushConstant)};
 
   // Creating the Pipeline Layout
   vk::PipelineLayoutCreateInfo pipelineLayoutCreateInfo;
@@ -222,7 +222,7 @@ void GBuffer::draw
 
     m_pushConstant.instanceId = idxNode++;
     m_pushConstant.materialId = primitive.materialIndex;
-    cmdBuf.pushConstants<ObjPushConstant>
+    cmdBuf.pushConstants<PushConstant>
     (
       m_PipelineLayout,
       vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,

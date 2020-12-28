@@ -40,6 +40,7 @@
 #include "gbuffer.h"
 #include "postprocessing.h"
 #include "pathtrace.h"
+#include "atrous.h"
 
 //--------------------------------------------------------------------------------------------------
 // Simple rasterizer of OBJ objects
@@ -105,41 +106,10 @@ public:
   GBuffer m_gbuffer;
   PostProcessing m_postprocessing;
   Pathtrace m_pathtrace;
+  ATrous m_atrous;
 
   // #A-Trous
-  void createATrousRender();
-  void createATrousPipeline();
-  void createATrousDescriptor();
   void updateATrousDescriptorSet();
-  void drawATrous(const vk::CommandBuffer& cmdBuf);
-
-  nvvk::DescriptorSetBindings m_aTrousDescSetLayoutBind;
-  vk::DescriptorPool          m_aTrousDescPool;
-  vk::DescriptorSetLayout     m_aTrousDescSetLayout;
-  vk::DescriptorSet           m_aTrousDescSetPing;
-  vk::DescriptorSet           m_aTrousDescSetPong;
-  vk::Pipeline                m_aTrousPipeline;
-  vk::PipelineLayout          m_aTrousPipelineLayout;
-  vk::RenderPass              m_aTrousRenderPass;
-  vk::Framebuffer             m_aTrousFramebufferPing;
-  vk::Framebuffer             m_aTrousFramebufferPong;
-  nvvk::Texture               m_aTrousTexturePing;
-  nvvk::Texture               m_aTrousTexturePong;
-  vk::Format                  m_aTrousFormat{ vk::Format::eR32G32B32A32Sfloat };
-
-  struct ATrousPushConstants
-  {
-    int stepwidth;
-    float c_phi;
-    float n_phi;
-    float p_phi;
-  };
-  ATrousPushConstants m_aTrousPushConstant;
-
-  bool m_enableATrous = false;
-  float m_c_phi0 = 1E-2f;
-  float m_n_phi0 = 1E-2f;
-  float m_p_phi0 = 1E-1f;
 
   // #Post
   void updatePostDescriptorSet();

@@ -63,25 +63,25 @@ void renderUI(HelloVulkan& helloVk, nvmath::vec4f* clearColor)
 {
   ImGui::TextColored(ImVec4(1, 1, 0, 1), "Common");
   ImGui::ColorEdit3("Clear color", reinterpret_cast<float*>(clearColor));
-  ImGui::SliderInt("Samples", &helloVk.m_rtPushConstants.samples, 1, 16);
-  ImGui::SliderInt("Bounces", &helloVk.m_rtPushConstants.bounces, 0, 5);
-  ImGui::SliderInt("Samples Per Bounce", &helloVk.m_rtPushConstants.bounceSamples, 1, 4);
+  ImGui::SliderInt("Samples", &helloVk.m_pathtrace.m_pushConstants.samples, 1, 16);
+  ImGui::SliderInt("Bounces", &helloVk.m_pathtrace.m_pushConstants.bounces, 0, 5);
+  ImGui::SliderInt("Samples Per Bounce", &helloVk.m_pathtrace.m_pushConstants.bounceSamples, 1, 4);
 
   ImGui::TextColored(ImVec4(1, 1, 0, 1), "Direct Lighting");
-  ImGui::RadioButton("Off", &helloVk.m_rtPushConstants.lightType, -1);
+  ImGui::RadioButton("Off", &helloVk.m_pathtrace.m_pushConstants.lightType, -1);
   ImGui::SameLine();
-  ImGui::RadioButton("Point", &helloVk.m_rtPushConstants.lightType, 0);
+  ImGui::RadioButton("Point", &helloVk.m_pathtrace.m_pushConstants.lightType, 0);
   ImGui::SameLine();
-  ImGui::RadioButton("Infinite", &helloVk.m_rtPushConstants.lightType, 1);
+  ImGui::RadioButton("Infinite", &helloVk.m_pathtrace.m_pushConstants.lightType, 1);
 
-  if(helloVk.m_rtPushConstants.lightType != -1)
+  if(helloVk.m_pathtrace.m_pushConstants.lightType != -1)
   {
-    ImGui::SliderFloat3("Light Position", &helloVk.m_rtPushConstants.lightPosition.x, -20.f, 20.f);
-    ImGui::SliderFloat("Light Intensity", &helloVk.m_rtPushConstants.lightIntensity, 0.f, 100.f);
+    ImGui::SliderFloat3("Light Position", &helloVk.m_pathtrace.m_pushConstants.lightPosition.x, -20.f, 20.f);
+    ImGui::SliderFloat("Light Intensity", &helloVk.m_pathtrace.m_pushConstants.lightIntensity, 0.f, 100.f);
   }
 
   ImGui::TextColored(ImVec4(1, 1, 0, 1), "Temporal Filter");
-  ImGui::SliderFloat("Alpha", &helloVk.m_rtPushConstants.temporalAlpha, 0.f, 0.99f);
+  ImGui::SliderFloat("Alpha", &helloVk.m_pathtrace.m_pushConstants.temporalAlpha, 0.f, 0.99f);
 
   ImGui::TextColored(ImVec4(1, 1, 0, 1), "Post Processing");
   ImGui::RadioButton("Blur Off", &helloVk.m_postprocessing.m_pushConstants.kernelType, -1);
@@ -206,7 +206,7 @@ int main(int argc, char** argv)
   helloVk.loadScene(nvh::findFile("media/scenes/cornellBox.gltf", defaultSearchPaths));
   //helloVk.loadScene(nvh::findFile("../glTF-Sample-Models/2.0/Sponza/glTF/Sponza.gltf", defaultSearchPaths));
 
-  helloVk.createOffscreenRender();
+  helloVk.m_pathtrace.createRender(helloVk.getSize());
 
   helloVk.createDescriptorSetLayout();
   helloVk.createUniformBuffer();
@@ -221,12 +221,11 @@ int main(int argc, char** argv)
   helloVk.updateATrousDescriptorSet();
 
   // #VKRay
-  helloVk.initRayTracing();
-  helloVk.createBottomLevelAS();
-  helloVk.createTopLevelAS();
-  helloVk.createRtDescriptorSet();
-  helloVk.createRtPipeline();
-  helloVk.createRtShaderBindingTable();
+  helloVk.m_pathtrace.createBottomLevelAS(helloVk.m_gltfScene, helloVk.m_vertexBuffer.buffer, helloVk.m_indexBuffer.buffer);
+  helloVk.m_pathtrace.createTopLevelAS(helloVk.m_gltfScene);
+  helloVk.m_pathtrace.createDescriptorSet(helloVk.m_rtPrimLookup.buffer);
+  helloVk.m_pathtrace.createPipeline(&helloVk.m_descSetLayout, defaultSearchPaths);
+  helloVk.m_pathtrace.createShaderBindingTable();
 
   helloVk.m_postprocessing.createRender(helloVk.getSize(), helloVk.getRenderPass());
   helloVk.m_postprocessing.createDescriptorSet();
@@ -305,12 +304,12 @@ int main(int argc, char** argv)
       vk::RenderPassBeginInfo offscreenRenderPassBeginInfo;
       offscreenRenderPassBeginInfo.setClearValueCount(2);
       offscreenRenderPassBeginInfo.setPClearValues(clearValues);
-      offscreenRenderPassBeginInfo.setRenderPass(helloVk.m_offscreenRenderPass);
-      offscreenRenderPassBeginInfo.setFramebuffer(helloVk.m_offscreenFramebuffer);
+      offscreenRenderPassBeginInfo.setRenderPass(helloVk.m_pathtrace.m_RenderPass);
+      offscreenRenderPassBeginInfo.setFramebuffer(helloVk.m_pathtrace.m_Framebuffer);
       offscreenRenderPassBeginInfo.setRenderArea({{}, helloVk.getSize()});
 
       // Rendering Scene
-      helloVk.raytrace(cmdBuf, clearColor);
+      helloVk.m_pathtrace.draw(cmdBuf, helloVk.m_descSet, clearColor);
     }
 
     {

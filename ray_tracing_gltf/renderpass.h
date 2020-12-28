@@ -8,7 +8,7 @@
 class Renderpass
 {
 public:
-  void setup
+  virtual void setup
   (
     const vk::Device&         device,
     const vk::PhysicalDevice& physicalDevice,

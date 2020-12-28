@@ -39,6 +39,7 @@
 
 #include "gbuffer.h"
 #include "postprocessing.h"
+#include "pathtrace.h"
 
 //--------------------------------------------------------------------------------------------------
 // Simple rasterizer of OBJ objects
@@ -103,15 +104,7 @@ public:
 
   GBuffer m_gbuffer;
   PostProcessing m_postprocessing;
-
-  void createOffscreenRender();
-
-  vk::RenderPass              m_offscreenRenderPass;
-  vk::Framebuffer             m_offscreenFramebuffer;
-  nvvk::Texture               m_offscreenColor;
-  vk::Format                  m_offscreenColorFormat{ vk::Format::eR32G32B32A32Sfloat };
-  nvvk::Texture               m_offscreenDepth;
-  vk::Format                  m_offscreenDepthFormat{ vk::Format::eD32Sfloat };
+  Pathtrace m_pathtrace;
 
   // #A-Trous
   void createATrousRender();
@@ -132,6 +125,7 @@ public:
   vk::Framebuffer             m_aTrousFramebufferPong;
   nvvk::Texture               m_aTrousTexturePing;
   nvvk::Texture               m_aTrousTexturePong;
+  vk::Format                  m_aTrousFormat{ vk::Format::eR32G32B32A32Sfloat };
 
   struct ATrousPushConstants
   {
@@ -151,40 +145,5 @@ public:
   void updatePostDescriptorSet();
 
   // #VKRay
-  nvvk::RaytracingBuilderKHR::BlasInput primitiveToGeometry(const nvh::GltfPrimMesh& prim);
-
-  void initRayTracing();
-  void createBottomLevelAS();
-  void createTopLevelAS();
-  void createRtDescriptorSet();
   void updateRtDescriptorSet();
-  void createRtPipeline();
-  void createRtShaderBindingTable();
-  void raytrace(const vk::CommandBuffer& cmdBuf, const nvmath::vec4f& clearColor);
-  void updateFrame();
-  void resetFrame();
-
-  vk::PhysicalDeviceRayTracingPipelinePropertiesKHR   m_rtProperties;
-  nvvk::RaytracingBuilderKHR                          m_rtBuilder;
-  nvvk::DescriptorSetBindings                         m_rtDescSetLayoutBind;
-  vk::DescriptorPool                                  m_rtDescPool;
-  vk::DescriptorSetLayout                             m_rtDescSetLayout;
-  vk::DescriptorSet                                   m_rtDescSet;
-  std::vector<vk::RayTracingShaderGroupCreateInfoKHR> m_rtShaderGroups;
-  vk::PipelineLayout                                  m_rtPipelineLayout;
-  vk::Pipeline                                        m_rtPipeline;
-  nvvk::Buffer                                        m_rtSBTBuffer;
-
-  struct RtPushConstant
-  {
-    nvmath::vec4f clearColor;
-    nvmath::vec3f lightPosition{0.f, 4.5f, 0.f};
-    float         lightIntensity{10.f};
-    int           lightType{-1}; // -1: off, 0: point, 1: infinite
-    int           frame{0};
-    int           samples{2};
-    int           bounces{2};
-    int           bounceSamples{2};
-    float         temporalAlpha{0.1f};
-  } m_rtPushConstants;
 };

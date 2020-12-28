@@ -33,6 +33,8 @@ public:
   );
   void createTopLevelAS(const nvh::GltfScene& gltfScene);
 
+  void updateDescriptorSet();
+
   void draw
   (
     const vk::CommandBuffer& cmdBuf,

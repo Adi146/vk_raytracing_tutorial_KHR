@@ -15,6 +15,8 @@ public:
     std::vector<std::string> defaultSearchPaths
   ) override;
 
+  void updateDescriptorSet(VkDescriptorImageInfo* src);
+
   void draw
   (
     const vk::CommandBuffer& cmdBuf

@@ -15,6 +15,12 @@ public:
     std::vector<std::string> defaultSearchPaths
   ) override;
 
+  void updateDesriptorSet
+  (
+    VkDescriptorImageInfo* positionMap,
+    VkDescriptorImageInfo* normalMap
+  );
+
   void draw
   (
     const vk::CommandBuffer& cmdBuf
@@ -31,7 +37,7 @@ public:
   vk::DescriptorSet           m_DescSetPing;
   vk::DescriptorSet           m_DescSetPong;
 
-  bool m_enabled = true;
+  bool m_enabled = false;
   float m_c_phi0 = 1E-2f;
   float m_n_phi0 = 1E-2f;
   float m_p_phi0 = 1E-1f;

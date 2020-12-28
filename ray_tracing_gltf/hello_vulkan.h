@@ -84,14 +84,6 @@ public:
   nvvk::Buffer   m_matrixBuffer;
   nvvk::Buffer   m_rtPrimLookup;
 
-  // Information pushed at each draw call
-  struct ObjPushConstant
-  {
-    int           instanceId{0};  // To retrieve the transformation matrix
-    int           materialId{0};
-  };
-  ObjPushConstant m_pushConstant;
-
   nvvk::DescriptorSetBindings m_descSetLayoutBind;
   vk::DescriptorPool          m_descPool;
   vk::DescriptorSetLayout     m_descSetLayout;
@@ -107,13 +99,4 @@ public:
   PostProcessing m_postprocessing;
   Pathtrace m_pathtrace;
   ATrous m_atrous;
-
-  // #A-Trous
-  void updateATrousDescriptorSet();
-
-  // #Post
-  void updatePostDescriptorSet();
-
-  // #VKRay
-  void updateRtDescriptorSet();
 };

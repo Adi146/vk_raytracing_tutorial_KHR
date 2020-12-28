@@ -119,6 +119,31 @@ void ATrous::createPipeline
   m_debug.setObjectName(m_Pipeline, "a-trous");
 }
 
+void ATrous::updateDesriptorSet
+(
+  VkDescriptorImageInfo* positionMap,
+  VkDescriptorImageInfo* normalMap
+)
+{
+  {
+    std::vector<vk::WriteDescriptorSet> writes;
+    writes.emplace_back(m_DescSetLayoutBind.makeWrite(m_DescSetPing, 0, &m_TexturePong.descriptor));
+    writes.emplace_back(m_DescSetLayoutBind.makeWrite(m_DescSetPing, 1, positionMap));
+    writes.emplace_back(m_DescSetLayoutBind.makeWrite(m_DescSetPing, 2, normalMap));
+
+    m_device.updateDescriptorSets(static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+  }
+
+  {
+    std::vector<vk::WriteDescriptorSet> writes;
+    writes.emplace_back(m_DescSetLayoutBind.makeWrite(m_DescSetPong, 0, &m_TexturePing.descriptor));
+    writes.emplace_back(m_DescSetLayoutBind.makeWrite(m_DescSetPong, 1, positionMap));
+    writes.emplace_back(m_DescSetLayoutBind.makeWrite(m_DescSetPong, 2, normalMap));
+
+    m_device.updateDescriptorSets(static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+  }
+}
+
 void ATrous::draw(const vk::CommandBuffer& cmdBuf)
 {
   if (!m_enabled)

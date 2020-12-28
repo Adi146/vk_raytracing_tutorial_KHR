@@ -218,7 +218,7 @@ int main(int argc, char** argv)
   helloVk.m_atrous.createRender(helloVk.getSize(), helloVk.m_pathtrace.m_outputColor);
   helloVk.m_atrous.createDescriptorSet();
   helloVk.m_atrous.createPipeline(&helloVk.m_atrous.m_DescSetLayout, defaultSearchPaths);
-  helloVk.updateATrousDescriptorSet();
+  helloVk.m_atrous.updateDesriptorSet(&helloVk.m_gbuffer.m_position.descriptor, &helloVk.m_gbuffer.m_normal.descriptor);
 
   // #VKRay
   helloVk.m_pathtrace.createBottomLevelAS(helloVk.m_gltfScene, helloVk.m_vertexBuffer.buffer, helloVk.m_indexBuffer.buffer);
@@ -230,7 +230,12 @@ int main(int argc, char** argv)
   helloVk.m_postprocessing.createRender(helloVk.getSize(), helloVk.getRenderPass());
   helloVk.m_postprocessing.createDescriptorSet();
   helloVk.m_postprocessing.createPipeline(&helloVk.m_postprocessing.m_DescSetLayout, defaultSearchPaths);
-  helloVk.updatePostDescriptorSet();
+  helloVk.m_postprocessing.updateDescriptorSet
+  (
+    helloVk.m_atrous.m_enabled ? 
+    &helloVk.m_atrous.m_TexturePong.descriptor : 
+    &helloVk.m_pathtrace.m_historyColor.descriptor
+  );
 
   nvmath::vec4f clearColor = nvmath::vec4f(1, 1, 1, 1.00f);
 

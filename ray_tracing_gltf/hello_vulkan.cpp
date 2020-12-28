@@ -366,16 +366,9 @@ void HelloVulkan::destroyResources()
     m_alloc.destroy(t);
   }
 
-  //#Post
   m_postprocessing.destroy();
-
-  //# GBuffer
   m_gbuffer.destroy();
-
-  //#A-Trous
   m_atrous.destroy();
-
-  // #VKRay
   m_pathtrace.destroy();
 }
 
@@ -389,86 +382,9 @@ void HelloVulkan::onResize(int /*w*/, int /*h*/)
   m_gbuffer.createRender(m_size);
   m_atrous.createRender(m_size, m_pathtrace.m_outputColor);
 
-  updatePostDescriptorSet();
-  updateATrousDescriptorSet();
-  updateRtDescriptorSet();
-}
-
-void HelloVulkan::updateATrousDescriptorSet()
-{
-  {
-    std::vector<vk::WriteDescriptorSet> writes;
-    writes.emplace_back(m_atrous.m_DescSetLayoutBind.makeWrite(m_atrous.m_DescSetPing, 0, &m_atrous.m_TexturePong.descriptor));
-    writes.emplace_back(m_atrous.m_DescSetLayoutBind.makeWrite(m_atrous.m_DescSetPing, 1, &m_gbuffer.m_position.descriptor));
-    writes.emplace_back(m_atrous.m_DescSetLayoutBind.makeWrite(m_atrous.m_DescSetPing, 2, &m_gbuffer.m_normal.descriptor));
-
-    m_device.updateDescriptorSets(static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
-  }
-
-  {
-    std::vector<vk::WriteDescriptorSet> writes;
-    writes.emplace_back(m_atrous.m_DescSetLayoutBind.makeWrite(m_atrous.m_DescSetPong, 0, &m_atrous.m_TexturePing.descriptor));
-    writes.emplace_back(m_atrous.m_DescSetLayoutBind.makeWrite(m_atrous.m_DescSetPong, 1, &m_gbuffer.m_position.descriptor));
-    writes.emplace_back(m_atrous.m_DescSetLayoutBind.makeWrite(m_atrous.m_DescSetPong, 2, &m_gbuffer.m_normal.descriptor));
-
-    m_device.updateDescriptorSets(static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
-  }
-}
-
-//--------------------------------------------------------------------------------------------------
-// Update the output
-//
-void HelloVulkan::updatePostDescriptorSet()
-{
-  std::vector<vk::WriteDescriptorSet> writes;
-  if (m_atrous.m_enabled)
-  {
-    writes.emplace_back(m_postprocessing.m_DescSetLayoutBind.makeWrite
-    (
-      m_postprocessing.m_DescSet,
-      0,
-      &m_atrous.m_TexturePong.descriptor
-    ));
-  }
-  else
-  {
-    writes.emplace_back(m_postprocessing.m_DescSetLayoutBind.makeWrite
-    (
-      m_postprocessing.m_DescSet,
-      0,
-      &m_pathtrace.m_historyColor.descriptor
-    ));
-  }
-
-  m_device.updateDescriptorSets(static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
-}
-
-//////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////
-
-//--------------------------------------------------------------------------------------------------
-// Writes the output image to the descriptor set
-// - Required when changing resolution
-//
-void HelloVulkan::updateRtDescriptorSet()
-{
-  using vkDT = vk::DescriptorType;
-
-  vk::DescriptorImageInfo outputImageInfo
-  {
-    {}, m_pathtrace.m_outputColor.descriptor.imageView, vk::ImageLayout::eGeneral
-  };
-
-  vk::DescriptorImageInfo historyImageInfo
-  {
-    {}, m_pathtrace.m_historyColor.descriptor.imageView, vk::ImageLayout::eGeneral
-  };
-
-  std::vector<vk::WriteDescriptorSet> writes;
-  writes.emplace_back(m_pathtrace.m_DescSetLayoutBind.makeWrite(m_pathtrace.m_DescSet, 1, &outputImageInfo));
-  writes.emplace_back(m_pathtrace.m_DescSetLayoutBind.makeWrite(m_pathtrace.m_DescSet, 2, &historyImageInfo));
-  m_device.updateDescriptorSets(static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+  m_postprocessing.updateDescriptorSet(m_atrous.m_enabled ? &m_atrous.m_TexturePong.descriptor : &m_pathtrace.m_historyColor.descriptor);
+  m_atrous.updateDesriptorSet(&m_gbuffer.m_position.descriptor, &m_gbuffer.m_normal.descriptor);
+  m_pathtrace.updateDescriptorSet();
 }
 
 

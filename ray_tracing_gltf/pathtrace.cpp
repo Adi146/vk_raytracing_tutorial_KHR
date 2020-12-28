@@ -389,6 +389,26 @@ nvvk::RaytracingBuilderKHR::BlasInput Pathtrace::primitiveToGeometry
   return input;
 }
 
+void Pathtrace::updateDescriptorSet()
+{
+  using vkDT = vk::DescriptorType;
+
+  vk::DescriptorImageInfo outputImageInfo
+  {
+    {}, m_outputColor.descriptor.imageView, vk::ImageLayout::eGeneral
+  };
+
+  vk::DescriptorImageInfo historyImageInfo
+  {
+    {}, m_historyColor.descriptor.imageView, vk::ImageLayout::eGeneral
+  };
+
+  std::vector<vk::WriteDescriptorSet> writes;
+  writes.emplace_back(m_DescSetLayoutBind.makeWrite(m_DescSet, 1, &outputImageInfo));
+  writes.emplace_back(m_DescSetLayoutBind.makeWrite(m_DescSet, 2, &historyImageInfo));
+  m_device.updateDescriptorSets(static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+}
+
 //--------------------------------------------------------------------------------------------------
 // Ray Tracing the scene
 //

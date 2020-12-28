@@ -6,8 +6,6 @@
 
 void PostProcessing::destroy()
 {
-
-
   m_device.destroy(m_DescPool);
   m_device.destroy(m_DescSetLayout);
 
@@ -62,6 +60,13 @@ void PostProcessing::createPipeline
   pipelineGenerator.rasterizationState.setCullMode(vk::CullModeFlagBits::eNone);
   m_Pipeline = pipelineGenerator.createPipeline();
   m_debug.setObjectName(m_Pipeline, "post");
+}
+
+void PostProcessing::updateDescriptorSet(VkDescriptorImageInfo* src)
+{
+  std::vector<vk::WriteDescriptorSet> writes;
+  writes.emplace_back(m_DescSetLayoutBind.makeWrite(m_DescSet, 0, src));
+  m_device.updateDescriptorSets(static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 }
 
 void PostProcessing::draw

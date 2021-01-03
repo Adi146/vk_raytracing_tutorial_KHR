@@ -26,8 +26,6 @@ void Pathtrace::setup
 void Pathtrace::destroy()
 {
   Renderpass::destroy();
-  m_device.destroy(m_RenderPass);
-  m_device.destroy(m_Framebuffer);
 
   m_alloc->destroy(m_historyColor);
   m_alloc->destroy(m_outputColor);
@@ -95,32 +93,6 @@ void Pathtrace::createRender(vk::Extent2D size)
 
     genCmdBuf.submitAndWait(cmdBuf);
   }
-
-  // Creating a renderpass for the offscreen
-  if (!m_RenderPass)
-  {
-    m_RenderPass =
-      nvvk::createRenderPass(m_device, { m_colorFormat, m_colorFormat }, m_depthFormat, 1, true,
-        true, vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral);
-  }
-
-  // Creating the frame buffer for offscreen
-  std::vector<vk::ImageView> attachments = 
-  { 
-    m_historyColor.descriptor.imageView,
-    m_outputColor.descriptor.imageView,
-    m_depth.descriptor.imageView 
-  };
-
-  m_device.destroy(m_Framebuffer);
-  vk::FramebufferCreateInfo info;
-  info.setRenderPass(m_RenderPass);
-  info.setAttachmentCount(3);
-  info.setPAttachments(attachments.data());
-  info.setWidth(size.width);
-  info.setHeight(size.height);
-  info.setLayers(1);
-  m_Framebuffer = m_device.createFramebuffer(info);
 }
 
 void Pathtrace::createDescriptorSet(vk::Buffer primitiveLookupBuffer)

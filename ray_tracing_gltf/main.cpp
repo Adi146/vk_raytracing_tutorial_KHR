@@ -101,8 +101,8 @@ void renderUI(HelloVulkan& helloVk, nvmath::vec4f* clearColor)
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
-static int const SAMPLE_WIDTH  = 1280;
-static int const SAMPLE_HEIGHT = 720;
+static int const SAMPLE_WIDTH  = 1920;
+static int const SAMPLE_HEIGHT = 1080;
 
 //--------------------------------------------------------------------------------------------------
 // Application Entry
@@ -173,7 +173,21 @@ int main(int argc, char** argv)
   vk::PhysicalDeviceRayTracingPipelineFeaturesKHR rtPipelineFeature;
   contextInfo.addDeviceExtension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, false,
                                  &rtPipelineFeature);
-
+  // #OptiX
+  contextInfo.addInstanceExtension(VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME);
+  contextInfo.addInstanceExtension(VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME);
+  contextInfo.addInstanceExtension(VK_KHR_EXTERNAL_FENCE_CAPABILITIES_EXTENSION_NAME);
+#ifdef WIN32
+  contextInfo.addDeviceExtension(VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME);
+  contextInfo.addDeviceExtension(VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME);
+  contextInfo.addDeviceExtension(VK_KHR_EXTERNAL_FENCE_WIN32_EXTENSION_NAME);
+#else
+  contextInfo.addDeviceExtension(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
+  contextInfo.addDeviceExtension(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
+  contextInfo.addDeviceExtension(VK_KHR_EXTERNAL_FENCE_FD_EXTENSION_NAME);
+#endif
+  vk::PhysicalDeviceTimelineSemaphoreFeatures timelineFeature;
+  contextInfo.addDeviceExtension(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME, false, &timelineFeature);
 
   // Creating Vulkan base application
   nvvk::Context vkctx{};
@@ -187,6 +201,8 @@ int main(int argc, char** argv)
 
   // Create example
   HelloVulkan helloVk;
+
+  helloVk.m_denoiser.initOptiX();
 
   // Window need to be opened to get the surface on which to draw
   const vk::SurfaceKHR surface = helloVk.getVkSurface(vkctx.m_instance, window);
@@ -205,6 +221,9 @@ int main(int argc, char** argv)
   // Creation of the example
   helloVk.loadScene(nvh::findFile("media/scenes/cornellBox.gltf", defaultSearchPaths));
   //helloVk.loadScene(nvh::findFile("../glTF-Sample-Models/2.0/Sponza/glTF/Sponza.gltf", defaultSearchPaths));
+
+  helloVk.createDenoiseOutImage();
+  helloVk.m_denoiser.allocateBuffers(helloVk.getSize());
 
   helloVk.m_pathtrace.createRender(helloVk.getSize());
 
@@ -234,7 +253,7 @@ int main(int argc, char** argv)
   (
     helloVk.m_atrous.m_enabled ? 
     &helloVk.m_atrous.m_TexturePong.descriptor : 
-    &helloVk.m_pathtrace.m_historyColor.descriptor
+    &helloVk.m_imageOut.descriptor
   );
 
   nvmath::vec4f clearColor = nvmath::vec4f(1, 1, 1, 1.00f);
@@ -265,61 +284,51 @@ int main(int argc, char** argv)
 
     cmdBuf.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 
-    // Updating camera buffer
-    helloVk.updateUniformBuffer(cmdBuf);
-
     // Clearing screen
     vk::ClearValue clearValues[2];
     clearValues[0].setColor(
         std::array<float, 4>({clearColor[0], clearColor[1], clearColor[2], clearColor[3]}));
     clearValues[1].setDepthStencil({1.0f, 0});
 
-    {
-      vk::ClearValue gBufferClearValues[3];
-      gBufferClearValues[0].setColor(std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f});
-      gBufferClearValues[1].setColor(std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f});
-      gBufferClearValues[2].setColor(std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f});
-      gBufferClearValues[3].setDepthStencil({1.0f, 0});
+    nvvk::CommandPool cmdPool(helloVk.getDevice(), helloVk.getQueueFamily());
+    auto subCmdBuf = cmdPool.createCommandBuffer();
 
-      vk::RenderPassBeginInfo gBufferRenderPassBeginInfo;
-      gBufferRenderPassBeginInfo.setClearValueCount(4);
-      gBufferRenderPassBeginInfo.setPClearValues(gBufferClearValues);
-      gBufferRenderPassBeginInfo.setRenderPass(helloVk.m_gbuffer.m_RenderPass);
-      gBufferRenderPassBeginInfo.setFramebuffer(helloVk.m_gbuffer.m_Framebuffer);
-      gBufferRenderPassBeginInfo.setRenderArea({{}, helloVk.getSize()});
+    // Updating camera buffer
+    helloVk.updateUniformBuffer(subCmdBuf);
 
-      cmdBuf.beginRenderPass(gBufferRenderPassBeginInfo, vk::SubpassContents::eInline);
-      helloVk.m_gbuffer.draw
-      (
-        cmdBuf,
-        helloVk.m_descSet,
-        std::vector<vk::Buffer>
-        {
-          helloVk.m_vertexBuffer.buffer,
-          helloVk.m_normalBuffer.buffer,
-          helloVk.m_uvBuffer.buffer
-        },
-        helloVk.m_indexBuffer.buffer,
-        helloVk.m_gltfScene);
-      cmdBuf.endRenderPass();
-    }
+    helloVk.m_gbuffer.draw
+    (
+      subCmdBuf,
+      helloVk.m_descSet,
+      std::vector<vk::Buffer>
+      {
+        helloVk.m_vertexBuffer.buffer,
+        helloVk.m_normalBuffer.buffer,
+        helloVk.m_uvBuffer.buffer
+      },
+      helloVk.m_indexBuffer.buffer,
+      helloVk.m_gltfScene
+    );
 
-    // Offscreen render pass
-    {
-      vk::RenderPassBeginInfo offscreenRenderPassBeginInfo;
-      offscreenRenderPassBeginInfo.setClearValueCount(2);
-      offscreenRenderPassBeginInfo.setPClearValues(clearValues);
-      offscreenRenderPassBeginInfo.setRenderPass(helloVk.m_pathtrace.m_RenderPass);
-      offscreenRenderPassBeginInfo.setFramebuffer(helloVk.m_pathtrace.m_Framebuffer);
-      offscreenRenderPassBeginInfo.setRenderArea({{}, helloVk.getSize()});
+    helloVk.m_pathtrace.draw(subCmdBuf, helloVk.m_descSet, clearColor);
 
-      // Rendering Scene
-      helloVk.m_pathtrace.draw(cmdBuf, helloVk.m_descSet, clearColor);
-    }
+    helloVk.m_denoiser.imageToBuffer
+    (
+      subCmdBuf,
+      {
+        helloVk.m_pathtrace.m_outputColor,
+        helloVk.m_gbuffer.m_color,
+        helloVk.m_gbuffer.m_normal
+      }
+    );
+    helloVk.m_denoiser.submitWithSemaphore(subCmdBuf, helloVk.m_fenceValue);
+    helloVk.m_denoiser.denoiseImageBuffer(subCmdBuf, &helloVk.m_imageOut, helloVk.m_fenceValue);
+    helloVk.m_denoiser.waitSemaphore(helloVk.m_fenceValue);
+    helloVk.m_denoiser.bufferToImage(cmdBuf, &helloVk.m_imageOut);
 
-    {
+    /*{
       helloVk.m_atrous.draw(cmdBuf);
-    }
+    }*/
 
     // 2nd rendering pass: tone mapper, UI
     {

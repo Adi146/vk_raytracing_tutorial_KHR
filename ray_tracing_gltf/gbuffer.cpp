@@ -27,10 +27,11 @@ void GBuffer::createRender(vk::Extent2D size)
 
   //position map
   {
-    auto        positionCreateInfo = nvvk::makeImage2DCreateInfo(size, m_positionColorFormat,
-                                                          vk::ImageUsageFlagBits::eColorAttachment
-                                                              | vk::ImageUsageFlagBits::eSampled);
-    nvvk::Image image              = m_alloc->createImage(positionCreateInfo);
+    auto positionCreateInfo = nvvk::makeImage2DCreateInfo(size, m_positionColorFormat,
+                                                          vk::ImageUsageFlagBits::eColorAttachment |
+                                                          vk::ImageUsageFlagBits::eSampled | 
+                                                          vk::ImageUsageFlagBits::eStorage);
+    nvvk::Image image = m_alloc->createImage(positionCreateInfo);
     vk::ImageViewCreateInfo ivInfo;
     ivInfo.setViewType(vk::ImageViewType::e2D);
     ivInfo.setFormat(m_positionColorFormat);
@@ -38,14 +39,16 @@ void GBuffer::createRender(vk::Extent2D size)
     ivInfo.setImage(image.image);
 
     m_position = m_alloc->createTexture(image, ivInfo, vk::SamplerCreateInfo());
+    m_position.descriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
   }
 
   //normal map
   {
-    auto        normalCreateInfo = nvvk::makeImage2DCreateInfo(size, m_normalColorFormat,
-                                                        vk::ImageUsageFlagBits::eColorAttachment
-                                                            | vk::ImageUsageFlagBits::eSampled);
-    nvvk::Image image            = m_alloc->createImage(normalCreateInfo);
+    auto normalCreateInfo = nvvk::makeImage2DCreateInfo(size, m_normalColorFormat,
+                                                        vk::ImageUsageFlagBits::eColorAttachment |
+                                                        vk::ImageUsageFlagBits::eSampled |
+                                                        vk::ImageUsageFlagBits::eStorage);
+    nvvk::Image image = m_alloc->createImage(normalCreateInfo);
     vk::ImageViewCreateInfo ivInfo;
     ivInfo.setViewType(vk::ImageViewType::e2D);
     ivInfo.setFormat(m_normalColorFormat);
@@ -53,14 +56,16 @@ void GBuffer::createRender(vk::Extent2D size)
     ivInfo.setImage(image.image);
 
     m_normal = m_alloc->createTexture(image, ivInfo, vk::SamplerCreateInfo());
+    m_normal.descriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
   }
 
   //color map
   {
-    auto                    colorCreateInfo = nvvk::makeImage2DCreateInfo(size, m_colorColorFormat,
-                                                       vk::ImageUsageFlagBits::eColorAttachment
-                                                           | vk::ImageUsageFlagBits::eSampled);
-    nvvk::Image image           = m_alloc->createImage(colorCreateInfo);
+    auto colorCreateInfo = nvvk::makeImage2DCreateInfo(size, m_colorColorFormat,
+                                                       vk::ImageUsageFlagBits::eColorAttachment |
+                                                       vk::ImageUsageFlagBits::eSampled |
+                                                       vk::ImageUsageFlagBits::eStorage);
+    nvvk::Image image = m_alloc->createImage(colorCreateInfo);
     vk::ImageViewCreateInfo ivInfo;
     ivInfo.setViewType(vk::ImageViewType::e2D);
     ivInfo.setFormat(m_colorColorFormat);
@@ -68,14 +73,14 @@ void GBuffer::createRender(vk::Extent2D size)
     ivInfo.setImage(image.image);
 
     m_color = m_alloc->createTexture(image, ivInfo, vk::SamplerCreateInfo());
+    m_color.descriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
   }
 
   //depth map
   {
-    auto depthCreateInfo =
-        nvvk::makeImage2DCreateInfo(size, m_depthColorFormat,
-                                    vk::ImageUsageFlagBits::eDepthStencilAttachment);
-    nvvk::Image             image = m_alloc->createImage(depthCreateInfo);
+    auto depthCreateInfo = nvvk::makeImage2DCreateInfo(size, m_depthColorFormat,
+                                                       vk::ImageUsageFlagBits::eDepthStencilAttachment);
+    nvvk::Image image = m_alloc->createImage(depthCreateInfo);
     vk::ImageViewCreateInfo ivInfo;
     ivInfo.setViewType(vk::ImageViewType::e2D);
     ivInfo.setFormat(m_depthColorFormat);
@@ -107,8 +112,8 @@ void GBuffer::createRender(vk::Extent2D size)
     m_RenderPass =
         nvvk::createRenderPass(m_device,
                                {m_positionColorFormat, m_normalColorFormat, m_colorColorFormat},
-                               m_depthColorFormat, 1, true, true, vk::ImageLayout::eUndefined,
-                               vk::ImageLayout::eShaderReadOnlyOptimal);
+                               m_depthColorFormat, 1, true, true, vk::ImageLayout::eGeneral,
+                               vk::ImageLayout::eGeneral);
   }
 
   // Creating the frame buffer for g-buffer
@@ -179,10 +184,25 @@ void GBuffer::draw
   const vk::CommandBuffer& cmdBuf,
   vk::DescriptorSet        descSet,
   std::vector<vk::Buffer>  vertexBuffers,
-  vk::Buffer indexBuffer,
-  nvh::GltfScene&           gltfScene
+  vk::Buffer               indexBuffer,
+  nvh::GltfScene&          gltfScene
 )
 {
+  vk::ClearValue clearValues[4];
+  clearValues[0].setColor(std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f});
+  clearValues[1].setColor(std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f});
+  clearValues[2].setColor(std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f});
+  clearValues[3].setDepthStencil({ 1.0f, 0 });
+
+  vk::RenderPassBeginInfo renderPassBeginInfo;
+  renderPassBeginInfo.setClearValueCount(4);
+  renderPassBeginInfo.setPClearValues(clearValues);
+  renderPassBeginInfo.setRenderPass(m_RenderPass);
+  renderPassBeginInfo.setFramebuffer(m_Framebuffer);
+  renderPassBeginInfo.setRenderArea({ {}, m_outputSize });
+
+  cmdBuf.beginRenderPass(renderPassBeginInfo, vk::SubpassContents::eInline);
+
   std::vector<vk::DeviceSize> offsets = {0, 0, 0};
   m_debug.beginLabel(cmdBuf, "GBuffer");
 
@@ -233,4 +253,6 @@ void GBuffer::draw
   }
 
   m_debug.endLabel(cmdBuf);
+
+  cmdBuf.endRenderPass();
 }

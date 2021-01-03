@@ -19,6 +19,8 @@ set(CMAKE_CXX_STANDARD 17)
 add_executable(${PROJNAME})
 _add_project_definitions(${PROJNAME})
 
+_add_package_Cuda()
+
 
 #--------------------------------------------------------------------------------------------------
 # Source files for this project
@@ -27,6 +29,7 @@ file(GLOB SOURCE_FILES *.cpp *.hpp *.inl *.h *.c)
 file(GLOB EXTRA_COMMON ${TUTO_KHR_DIR}/common/*.*)
 list(APPEND COMMON_SOURCE_FILES ${EXTRA_COMMON})
 include_directories(${TUTO_KHR_DIR}/common)
+include_directories("${CMAKE_CURRENT_SOURCE_DIR}/OptiX7SDK/include")
 
 
 #--------------------------------------------------------------------------------------------------

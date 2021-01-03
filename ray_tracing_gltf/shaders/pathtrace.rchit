@@ -171,7 +171,7 @@ void main()
     }
   }
 
-  indirect /= pushC.bounceSamples;
+  //indirect /= pushC.bounceSamples;
 
   vec3 direct = vec3(0);
   if (pushC.lightType != -1) // direct lighting

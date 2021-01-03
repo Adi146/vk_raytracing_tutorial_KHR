@@ -41,6 +41,7 @@
 #include "postprocessing.h"
 #include "pathtrace.h"
 #include "atrous.h"
+#include "denoiser.hpp"
 
 //--------------------------------------------------------------------------------------------------
 // Simple rasterizer of OBJ objects
@@ -99,4 +100,11 @@ public:
   PostProcessing m_postprocessing;
   Pathtrace m_pathtrace;
   ATrous m_atrous;
+  DenoiserOptix m_denoiser;
+
+  nvvk::Texture           m_imageOut;
+  void createDenoiseOutImage();
+  // Timeline semaphores
+  uint64_t m_fenceValue{ 0 };
+
 };

@@ -46,8 +46,6 @@ public:
   nvvk::Texture m_historyColor;
   nvvk::Texture m_depth;
 
-  vk::Framebuffer m_Framebuffer;
-
   nvvk::DescriptorSetBindings m_DescSetLayoutBind;
   vk::DescriptorSetLayout     m_DescSetLayout;
   vk::DescriptorSet           m_DescSet;

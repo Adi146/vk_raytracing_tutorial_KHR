@@ -78,6 +78,7 @@ void HelloVulkan::setup(const vk::Instance&       instance,
   m_postprocessing.setup(device, physicalDevice, queueFamily, &m_alloc);
   m_pathtrace.setup(device, physicalDevice, queueFamily, &m_alloc);
   m_atrous.setup(device, physicalDevice, queueFamily, &m_alloc);
+  m_denoiser.setup(device, physicalDevice, queueFamily);
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -385,6 +386,26 @@ void HelloVulkan::onResize(int /*w*/, int /*h*/)
   m_postprocessing.updateDescriptorSet(m_atrous.m_enabled ? &m_atrous.m_TexturePong.descriptor : &m_pathtrace.m_historyColor.descriptor);
   m_atrous.updateDesriptorSet(&m_gbuffer.m_position.descriptor, &m_gbuffer.m_normal.descriptor);
   m_pathtrace.updateDescriptorSet();
+
+  createDenoiseOutImage();
+  m_denoiser.allocateBuffers(m_size);
+}
+
+//--------------------------------------------------------------------------------------------------
+// Creating the image which is receiving the denoised version of the image
+//
+void HelloVulkan::createDenoiseOutImage()
+{
+  if (m_imageOut.image)
+    m_alloc.destroy(m_imageOut);
+
+  nvvk::ScopeCommandBuffer cmdBuf(m_device, m_graphicsQueueIndex);
+
+  vk::ImageCreateInfo     info = nvvk::makeImage2DCreateInfo(m_size, vk::Format::eR32G32B32A32Sfloat);
+  nvvk::Image             image = m_alloc.createImage(info);
+  vk::ImageViewCreateInfo ivInfo = nvvk::makeImageViewCreateInfo(image.image, info);
+  m_imageOut = m_alloc.createTexture(image, ivInfo, vk::SamplerCreateInfo());
+  nvvk::cmdBarrierImageLayout(cmdBuf, m_imageOut.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
 }
 
 

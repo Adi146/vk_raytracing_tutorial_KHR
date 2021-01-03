@@ -146,9 +146,6 @@ void ATrous::updateDesriptorSet
 
 void ATrous::draw(const vk::CommandBuffer& cmdBuf)
 {
-  if (!m_enabled)
-    return;
-
   vk::ClearValue clearValues[1];
   clearValues[0].setColor(std::array<float, 4>({ 0, 0, 0, 0 }));
 

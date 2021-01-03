@@ -382,8 +382,19 @@ void HelloVulkan::onResize(int /*w*/, int /*h*/)
   m_postprocessing.createRender(m_size, getRenderPass());
   m_gbuffer.createRender(m_size);
   m_atrous.createRender(m_size, m_pathtrace.m_outputColor);
+  
+  switch (m_denoiserKind)
+  {
+  case 0:
+    m_postprocessing.updateDescriptorSet(&m_atrous.m_TexturePong.descriptor);
+    break;
+  case 1:
+    m_postprocessing.updateDescriptorSet(&m_imageOut.descriptor);
+    break;
+  default:
+    m_postprocessing.updateDescriptorSet(&m_pathtrace.m_outputColor.descriptor);
+  }
 
-  m_postprocessing.updateDescriptorSet(m_atrous.m_enabled ? &m_atrous.m_TexturePong.descriptor : &m_pathtrace.m_historyColor.descriptor);
   m_atrous.updateDesriptorSet(&m_gbuffer.m_position.descriptor, &m_gbuffer.m_normal.descriptor);
   m_pathtrace.updateDescriptorSet();
 

@@ -107,4 +107,6 @@ public:
   // Timeline semaphores
   uint64_t m_fenceValue{ 0 };
 
+  int m_denoiserKind = -1; // -1 off; 0 a-trous; 1 optiX
+
 };

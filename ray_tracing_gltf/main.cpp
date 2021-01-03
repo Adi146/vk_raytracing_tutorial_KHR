@@ -90,10 +90,21 @@ void renderUI(HelloVulkan& helloVk, nvmath::vec4f* clearColor)
   ImGui::SameLine();
   ImGui::RadioButton("Gaussian Blur 5x5", &helloVk.m_postprocessing.m_pushConstants.kernelType, 1);
 
-  ImGui::TextColored(ImVec4(1, 1, 0, 1), "A-Trous");
-  ImGui::SliderFloat("C_Phi", &helloVk.m_atrous.m_c_phi0, 0.0f, 1.0f);
-  ImGui::SliderFloat("N_Phi", &helloVk.m_atrous.m_n_phi0, 0.0f, 100.0f);
-  ImGui::SliderFloat("P_Phi", &helloVk.m_atrous.m_p_phi0, 0.0f, 100.0f);
+  ImGui::TextColored(ImVec4(1, 1, 0, 1), "Denoising");
+  ImGui::RadioButton("Denoiser Off", &helloVk.m_denoiserKind, -1);
+  ImGui::SameLine();
+  ImGui::RadioButton("A-Trous", &helloVk.m_denoiserKind, 0);
+  ImGui::SameLine();
+  ImGui::RadioButton("OptiX", &helloVk.m_denoiserKind, 1);
+
+  if (helloVk.m_denoiserKind == 0)
+  {
+    ImGui::TextColored(ImVec4(1, 1, 0, 1), "A-Trous");
+    ImGui::SliderFloat("C_Phi", &helloVk.m_atrous.m_c_phi0, 0.0f, 1.0f);
+    ImGui::SliderFloat("N_Phi", &helloVk.m_atrous.m_n_phi0, 0.0f, 100.0f);
+    ImGui::SliderFloat("P_Phi", &helloVk.m_atrous.m_p_phi0, 0.0f, 100.0f);
+  }
+
   ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate,
               ImGui::GetIO().Framerate);
 }
@@ -249,12 +260,7 @@ int main(int argc, char** argv)
   helloVk.m_postprocessing.createRender(helloVk.getSize(), helloVk.getRenderPass());
   helloVk.m_postprocessing.createDescriptorSet();
   helloVk.m_postprocessing.createPipeline(&helloVk.m_postprocessing.m_DescSetLayout, defaultSearchPaths);
-  helloVk.m_postprocessing.updateDescriptorSet
-  (
-    helloVk.m_atrous.m_enabled ? 
-    &helloVk.m_atrous.m_TexturePong.descriptor : 
-    &helloVk.m_imageOut.descriptor
-  );
+
 
   nvmath::vec4f clearColor = nvmath::vec4f(1, 1, 1, 1.00f);
 
@@ -278,6 +284,18 @@ int main(int argc, char** argv)
     // Start rendering the scene
     helloVk.prepareFrame();
 
+    switch (helloVk.m_denoiserKind)
+    {
+      case 0:
+        helloVk.m_postprocessing.updateDescriptorSet(&helloVk.m_atrous.m_TexturePong.descriptor);
+        break;
+      case 1:
+        helloVk.m_postprocessing.updateDescriptorSet(&helloVk.m_imageOut.descriptor);
+        break;
+      default:
+        helloVk.m_postprocessing.updateDescriptorSet(&helloVk.m_pathtrace.m_outputColor.descriptor);
+    }
+
     // Start command buffer of this frame
     auto                     curFrame = helloVk.getCurFrame();
     const vk::CommandBuffer& cmdBuf   = helloVk.getCommandBuffers()[curFrame];
@@ -290,45 +308,70 @@ int main(int argc, char** argv)
         std::array<float, 4>({clearColor[0], clearColor[1], clearColor[2], clearColor[3]}));
     clearValues[1].setDepthStencil({1.0f, 0});
 
-    nvvk::CommandPool cmdPool(helloVk.getDevice(), helloVk.getQueueFamily());
-    auto subCmdBuf = cmdPool.createCommandBuffer();
+    if (helloVk.m_denoiserKind == 1) // OptiX
+    {
+      nvvk::CommandPool cmdPool(helloVk.getDevice(), helloVk.getQueueFamily());
+      auto subCmdBuf = cmdPool.createCommandBuffer();
 
-    // Updating camera buffer
-    helloVk.updateUniformBuffer(subCmdBuf);
+      // Updating camera buffer
+      helloVk.updateUniformBuffer(subCmdBuf);
 
-    helloVk.m_gbuffer.draw
-    (
-      subCmdBuf,
-      helloVk.m_descSet,
-      std::vector<vk::Buffer>
+      helloVk.m_gbuffer.draw
+      (
+        subCmdBuf,
+        helloVk.m_descSet,
+        std::vector<vk::Buffer>
+        {
+          helloVk.m_vertexBuffer.buffer,
+          helloVk.m_normalBuffer.buffer,
+          helloVk.m_uvBuffer.buffer
+        },
+        helloVk.m_indexBuffer.buffer,
+        helloVk.m_gltfScene
+      );
+
+      helloVk.m_pathtrace.draw(subCmdBuf, helloVk.m_descSet, clearColor);
+
+      helloVk.m_denoiser.imageToBuffer
+      (
+        subCmdBuf,
+        {
+          helloVk.m_pathtrace.m_outputColor,
+          helloVk.m_gbuffer.m_color,
+          helloVk.m_gbuffer.m_normal
+        }
+      );
+      helloVk.m_denoiser.submitWithSemaphore(subCmdBuf, helloVk.m_fenceValue);
+      helloVk.m_denoiser.denoiseImageBuffer(subCmdBuf, &helloVk.m_imageOut, helloVk.m_fenceValue);
+      helloVk.m_denoiser.waitSemaphore(helloVk.m_fenceValue);
+      helloVk.m_denoiser.bufferToImage(cmdBuf, &helloVk.m_imageOut);
+    }
+    else
+    {
+      // Updating camera buffer
+      helloVk.updateUniformBuffer(cmdBuf);
+
+      helloVk.m_gbuffer.draw
+      (
+        cmdBuf,
+        helloVk.m_descSet,
+        std::vector<vk::Buffer>
       {
         helloVk.m_vertexBuffer.buffer,
-        helloVk.m_normalBuffer.buffer,
-        helloVk.m_uvBuffer.buffer
+          helloVk.m_normalBuffer.buffer,
+          helloVk.m_uvBuffer.buffer
       },
-      helloVk.m_indexBuffer.buffer,
-      helloVk.m_gltfScene
-    );
+        helloVk.m_indexBuffer.buffer,
+          helloVk.m_gltfScene
+          );
 
-    helloVk.m_pathtrace.draw(subCmdBuf, helloVk.m_descSet, clearColor);
+      helloVk.m_pathtrace.draw(cmdBuf, helloVk.m_descSet, clearColor);
+    }
 
-    helloVk.m_denoiser.imageToBuffer
-    (
-      subCmdBuf,
-      {
-        helloVk.m_pathtrace.m_outputColor,
-        helloVk.m_gbuffer.m_color,
-        helloVk.m_gbuffer.m_normal
-      }
-    );
-    helloVk.m_denoiser.submitWithSemaphore(subCmdBuf, helloVk.m_fenceValue);
-    helloVk.m_denoiser.denoiseImageBuffer(subCmdBuf, &helloVk.m_imageOut, helloVk.m_fenceValue);
-    helloVk.m_denoiser.waitSemaphore(helloVk.m_fenceValue);
-    helloVk.m_denoiser.bufferToImage(cmdBuf, &helloVk.m_imageOut);
-
-    /*{
+    if(helloVk.m_denoiserKind == 0) // A-Trous
+    {
       helloVk.m_atrous.draw(cmdBuf);
-    }*/
+    }
 
     // 2nd rendering pass: tone mapper, UI
     {

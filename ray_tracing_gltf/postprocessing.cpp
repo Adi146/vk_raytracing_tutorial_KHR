@@ -64,6 +64,8 @@ void PostProcessing::createPipeline
 
 void PostProcessing::updateDescriptorSet(VkDescriptorImageInfo* src)
 {
+  m_device.waitIdle();
+
   std::vector<vk::WriteDescriptorSet> writes;
   writes.emplace_back(m_DescSetLayoutBind.makeWrite(m_DescSet, 0, src));
   m_device.updateDescriptorSets(static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
